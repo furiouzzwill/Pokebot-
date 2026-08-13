@@ -4,3 +4,4 @@ logs/*.log
 .env.local
 *.tgz
 .DS_Store
+config/app-state.json

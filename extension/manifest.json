@@ -3,10 +3,11 @@
   "name": "Pokebot Drop Assistant",
   "version": "0.1.0",
   "description": "Watches a Walmart or Target product tab you have open and adds the item to your cart the moment it goes in stock.",
-  "permissions": ["storage", "notifications"],
+  "permissions": ["storage", "notifications", "tabs", "alarms"],
   "host_permissions": [
     "https://www.walmart.com/*",
-    "https://www.target.com/*"
+    "https://www.target.com/*",
+    "http://127.0.0.1/*"
   ],
   "background": {
     "service_worker": "background.js"

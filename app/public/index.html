@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokebot</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Pokebot</h1>
+  <div class="pills">
+    <span id="extPill" class="pill off">extension offline</span>
+    <span id="modePill" class="pill">alert only</span>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Watchlist</h2>
+      <span id="countLabel" class="muted"></span>
+    </div>
+
+    <form id="addForm" class="add-row" autocomplete="off">
+      <input id="addUrl" type="url" placeholder="Walmart or Target product URL" required>
+      <input id="addName" type="text" placeholder="Label (optional)">
+      <button type="submit">Add</button>
+    </form>
+    <p id="addError" class="error"></p>
+
+    <ul id="watchlist" class="items"></ul>
+    <p id="emptyHint" class="muted hint">
+      Nothing watched yet. Paste a product URL above — the extension opens a
+      pinned tab for each one automatically.
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>Controls</h2>
+
+    <div class="ctl">
+      <label for="armed"><strong>Armed</strong><span class="sub">off = watch and alert only</span></label>
+      <input type="checkbox" id="armed">
+    </div>
+    <div class="ctl">
+      <label for="dryRun"><strong>Dry run</strong><span class="sub">log every click without making it</span></label>
+      <input type="checkbox" id="dryRun">
+    </div>
+    <div class="ctl">
+      <label for="autoCheckout"><strong>Auto-checkout</strong><span class="sub">cart → checkout, stop before submit</span></label>
+      <input type="checkbox" id="autoCheckout">
+    </div>
+    <div class="ctl">
+      <label for="placeOrder"><strong>Place order</strong><span class="sub">submits it — spends money</span></label>
+      <input type="checkbox" id="placeOrder">
+    </div>
+
+    <div class="ctl num"><label for="maxPrice">Max item price ($)</label><input type="number" id="maxPrice" min="1"></div>
+    <div class="ctl num"><label for="maxOrderTotal">Max order total ($)</label><input type="number" id="maxOrderTotal" min="1"></div>
+    <div class="ctl num"><label for="maxOrderItems">Max items per order</label><input type="number" id="maxOrderItems" min="1"></div>
+    <div class="ctl num"><label for="maxOrdersPerDay">Max orders per day</label><input type="number" id="maxOrdersPerDay" min="1"></div>
+    <div class="ctl num"><label for="reloadSeconds">Reload tabs every (s)</label><input type="number" id="reloadSeconds" min="0" step="5"></div>
+
+    <p class="note">
+      Never solves CAPTCHAs and never handles card details — checkout uses the
+      payment method saved in your retailer account. A bot check stops the run
+      and alerts you.
+    </p>
+  </section>
+
+  <section class="panel wide">
+    <div class="panel-head">
+      <h2>Activity</h2>
+      <button id="clearLog" class="link">clear view</button>
+    </div>
+    <ul id="log" class="log"></ul>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

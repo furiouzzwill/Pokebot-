@@ -1,13 +1,25 @@
 # pokebot
 
-Tools for catching Pokémon TCG drops at Walmart and Target. Two pieces:
+Tools for catching Pokémon TCG drops at Walmart and Target. Three pieces:
 
-1. **`extension/`** — a Chrome extension that runs in *your* logged-in browser,
-   watches a product tab you have open, carts the item the instant it goes
-   live, walks through checkout, and can place the order. This is the one that
-   actually buys things.
-2. **`src/`** — a standalone Node monitor that polls product pages and alerts
-   you. Useful, but see the blocking caveat below before you rely on it.
+1. **`app/`** — a local dashboard. Manage the watchlist, control everything
+   from one place, and watch live status across every SKU. **Start here.**
+2. **`extension/`** — a Chrome extension that runs in *your* logged-in browser.
+   The dashboard tells it what to watch; it opens a pinned tab per SKU, carts
+   the item the instant it goes live, walks through checkout, and can place the
+   order. This is the part that actually buys things.
+3. **`src/`** — a standalone Node monitor that polls product pages and alerts
+   you. Independent of the above; see the blocking caveat before relying on it.
+
+```
+dashboard  ──watchlist + settings──▶  extension  ──clicks──▶  your browser
+    ▲                                     │
+    └──────────── live events ────────────┘
+```
+
+The dashboard never touches a retailer site. It holds state and shows you
+what's happening; every click stays in your real session, which is the only
+place it works.
 
 ---
 
@@ -37,19 +49,46 @@ an extension: it's both the legitimate approach and the *faster* one.
   already saved in your retailer account. There is nowhere in this extension a
   card number could be stored, and nothing is transmitted anywhere.
 
-## Quick start — the extension (start here)
+## Quick start
 
-1. Chrome → `chrome://extensions` → turn on **Developer mode** →
-   **Load unpacked** → select the `extension/` folder.
-2. Click the extension icon. Set your **max price**. Leave **dry run on** and
-   **armed on**.
-3. Open the product page in a tab and leave it open.
-4. Watch the console (`F12`) — you'll see `[pokebot] watching`. When stock
-   lands it logs the click it *would* have made.
-5. Once you've seen it fire correctly, turn **dry run off**. Now it clicks.
+```bash
+npm install
+npm run app          # dashboard at http://127.0.0.1:8787
+```
 
-6. To let it check out too, turn on **Auto-continue to checkout**, then
-   **Place the order**. Set your **max order total** first.
+Then load the extension: Chrome → `chrome://extensions` → **Developer mode** →
+**Load unpacked** → select `extension/`. It connects to the dashboard on its
+own; the header pill flips to **extension connected**.
+
+From there, everything is in the dashboard:
+
+1. Paste product URLs into the watchlist. The extension opens a pinned tab for
+   each one automatically — you don't manage tabs by hand.
+2. Set **max item price** and **max order total**.
+3. Leave **dry run on**, turn **armed on**. Watch the activity feed.
+4. Once you've seen it fire correctly, turn **dry run off**.
+5. For full checkout, turn on **auto-checkout**, then **place order**.
+
+The header pill tells you what mode you're in at a glance, and goes red when
+it's live and able to spend.
+
+Saving a payment method and address in your Walmart/Target accounts first is
+required — checkout can't complete without them.
+
+### Remote access
+
+Localhost only by default. To reach it from your phone on the same wifi:
+
+```bash
+POKEBOT_LAN=1 POKEBOT_TOKEN=$(openssl rand -hex 12) npm run app
+```
+
+It refuses to start in LAN mode without a token, and prints the URL to open.
+
+### Running the extension without the dashboard
+
+It still works standalone — the popup has the same settings and the bridge just
+retries quietly in the background. You manage tabs yourself in that mode.
 
 Settings:
 
@@ -184,13 +223,19 @@ If you want carting today, use the extension — it doesn't have this problem.
 ## Architecture
 
 ```
+app/
+  server.js       HTTP + WebSocket hub; static UI, auth, broadcast
+  state.js        Watchlist, settings and history; atomic JSON persistence
+  public/         Dashboard UI (no build step, no framework)
+
 extension/
   manifest.json   MV3; content scripts scoped to PDP, cart and checkout pages
   content.js      PDP: watches for an enabled cart control and clicks it
   checkout.js     Cart -> checkout -> submit, with the refusal checks
-  background.js   Desktop notifications; pulls the tab to the front on a hit
+  bridge.js       Dashboard link; opens/closes a pinned tab per watched SKU
+  background.js   Desktop notifications; relays events to the dashboard
   config.js       Settings, defaults, and the persisted daily order ledger
-  options.html/js Settings UI
+  options.html/js Standalone settings UI (mirrors the dashboard)
 
 src/
   index.js        CLI: `check` (one-shot) and `watch` (continuous)
