@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node src/index.js watch",
     "check": "node src/index.js check",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:extension": "node --test test/extension.test.js"
   },
   "dependencies": {
     "axios": "^1.7.7",

@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Pokebot Drop Assistant",
+  "version": "0.1.0",
+  "description": "Watches a Walmart or Target product tab you have open and adds the item to your cart the moment it goes in stock.",
+  "permissions": ["storage", "notifications"],
+  "host_permissions": [
+    "https://www.walmart.com/*",
+    "https://www.target.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.walmart.com/ip/*",
+        "https://www.target.com/p/*"
+      ],
+      "js": ["config.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "icons": { "128": "icon128.png" },
+  "action": {
+    "default_title": "Pokebot Drop Assistant",
+    "default_popup": "options.html",
+    "default_icon": { "128": "icon128.png" }
+  }
+}

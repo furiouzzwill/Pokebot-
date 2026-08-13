@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pokebot Drop Assistant</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
+      margin: 0; padding: 18px; width: 340px;
+      background: Canvas; color: CanvasText;
+    }
+    h1 { font-size: 15px; margin: 0 0 2px; }
+    .sub { font-size: 12px; opacity: .65; margin: 0 0 16px; }
+    .row { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
+    .row label { flex: 1; }
+    input[type="number"] { width: 76px; padding: 4px 6px; }
+    .hint { font-size: 11px; opacity: .6; margin: -8px 0 12px; }
+    .danger {
+      border: 1px solid #e6394680; background: #e6394614;
+      border-radius: 8px; padding: 10px 12px; margin: 14px 0;
+    }
+    .danger strong { color: #e63946; }
+    hr { border: 0; border-top: 1px solid CanvasText; opacity: .12; margin: 16px 0; }
+    #status { font-size: 12px; min-height: 16px; opacity: .8; }
+    .foot { font-size: 11px; opacity: .55; }
+  </style>
+</head>
+<body>
+  <h1>Pokebot Drop Assistant</h1>
+  <p class="sub">Open a product tab and leave it open. This clicks Add to cart — checkout stays yours.</p>
+
+  <div class="row">
+    <label for="armed"><strong>Armed</strong> — allow clicking</label>
+    <input type="checkbox" id="armed">
+  </div>
+  <p class="hint">Off = alert only, never clicks.</p>
+
+  <div class="row">
+    <label for="dryRun"><strong>Dry run</strong> — log, don't click</label>
+    <input type="checkbox" id="dryRun">
+  </div>
+  <p class="hint">Leave on until you've seen it fire correctly once.</p>
+
+  <hr>
+
+  <div class="row">
+    <label for="maxPrice">Max price ($)</label>
+    <input type="number" id="maxPrice" min="1" step="1">
+  </div>
+  <p class="hint">Won't cart above this. Guards against reseller listings.</p>
+
+  <div class="row">
+    <label for="pollMs">Re-check every (ms)</label>
+    <input type="number" id="pollMs" min="250" step="250">
+  </div>
+
+  <div class="row">
+    <label for="reloadSeconds">Reload page every (s)</label>
+    <input type="number" id="reloadSeconds" min="0" step="5">
+  </div>
+  <p class="hint">0 = never reload. Use 30+; faster invites a bot check.</p>
+
+  <div class="row">
+    <label for="goToCartAfterAdd">Open cart after adding</label>
+    <input type="checkbox" id="goToCartAfterAdd">
+  </div>
+
+  <div class="danger">
+    <strong>It stops at the cart.</strong> This never enters payment details,
+    submits an order, or answers a CAPTCHA. If a bot check appears it stops and
+    alerts you so you can clear it yourself.
+  </div>
+
+  <div id="status"></div>
+  <p class="foot">Runs only in your own logged-in browser session.</p>
+
+  <script src="config.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
