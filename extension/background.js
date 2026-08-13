@@ -5,11 +5,18 @@
  * back to the tab even when it isn't focused.
  */
 
-const LOUD = new Set(['in-stock', 'carted', 'challenge', 'dry-run', 'skipped']);
+const LOUD = new Set([
+  'in-stock', 'carted', 'challenge', 'dry-run', 'skipped',
+  'ready-to-submit', 'placing-order', 'refused',
+]);
 
 const TITLES = {
   'in-stock': '🔔 IN STOCK',
   carted: '✅ Added to cart',
+  'checkout-step': '→ Checkout',
+  'ready-to-submit': '🛒 Ready to submit',
+  'placing-order': '💳 PLACING ORDER',
+  refused: '🛑 Refused to submit',
   challenge: '⚠️ Bot check hit',
   'dry-run': '🧪 Dry run',
   skipped: '⏭️ Skipped',
@@ -30,11 +37,13 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     title: TITLES[kind] || 'Pokebot',
     message: detail || kind,
     priority: 2,
-    requireInteraction: kind === 'in-stock' || kind === 'carted',
+    requireInteraction: ['in-stock', 'carted', 'ready-to-submit', 'placing-order', 'refused']
+      .includes(kind),
   });
 
-  // Pull the tab to the front so you can finish checkout.
-  if ((kind === 'carted' || kind === 'in-stock') && sender.tab) {
+  // Pull the tab to the front so you can intervene or finish up.
+  const PULL_FORWARD = ['carted', 'in-stock', 'ready-to-submit', 'placing-order', 'refused', 'challenge'];
+  if (PULL_FORWARD.includes(kind) && sender.tab) {
     chrome.tabs.update(sender.tab.id, { active: true });
     chrome.windows.update(sender.tab.windowId, { focused: true, drawAttention: true });
   }

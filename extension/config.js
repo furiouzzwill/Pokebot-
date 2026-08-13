@@ -34,9 +34,26 @@ const DEFAULTS = {
   // After a successful cart, open the cart page.
   goToCartAfterAdd: true,
 
-  // Placing the order is always yours. The extension will never submit an
-  // order or enter payment details -- it gets you to a full cart, fast.
-  // (No setting here on purpose.)
+  // --- Checkout -------------------------------------------------------------
+  // Two separate gates, both off by default. autoCheckout walks cart ->
+  // checkout and stops with the order ready to submit. placeOrder is the one
+  // that actually spends money, and it requires autoCheckout as well.
+  autoCheckout: false,
+  placeOrder: false,
+
+  // Hard ceiling on the order total at the point of submission, in dollars.
+  // Checked against the total the checkout page actually shows -- separate
+  // from maxPrice, so shipping, tax, or a sneaky extra line item can't slip
+  // an order through under an item-level cap.
+  maxOrderTotal: 150,
+
+  // Refuse to submit an order containing more than this many items. Catches a
+  // stuck cart or a quantity stepper that ran away.
+  maxOrderItems: 2,
+
+  // Orders this extension may place per calendar day, across all tabs.
+  // Persisted, so a reload loop cannot re-order.
+  maxOrdersPerDay: 1,
 
   // Alert loudly on stock, on a challenge page, and on cart success/failure.
   sound: true,
@@ -53,6 +70,49 @@ async function saveSettings(patch) {
   await chrome.storage.sync.set(patch);
 }
 
+/**
+ * Daily order ledger, kept in local storage so it survives reloads and is
+ * shared across tabs. This is the backstop that stops a reload loop or two
+ * open tabs from placing the same order twice.
+ */
+const LEDGER_KEY = 'orderLedger';
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function readLedger() {
+  if (typeof chrome === 'undefined' || !chrome.storage) return { date: today(), count: 0 };
+  const { [LEDGER_KEY]: ledger } = await chrome.storage.local.get(LEDGER_KEY);
+  if (!ledger || ledger.date !== today()) return { date: today(), count: 0 };
+  return ledger;
+}
+
+/** @returns {Promise<boolean>} true when another order is allowed today. */
+async function canPlaceOrder(maxPerDay) {
+  const ledger = await readLedger();
+  return ledger.count < maxPerDay;
+}
+
+/**
+ * Claim a slot in today's budget. Call this BEFORE clicking submit, not after:
+ * if the click succeeds and the page navigates away, an after-the-fact write
+ * never lands and the guard is useless.
+ */
+async function recordOrder() {
+  const ledger = await readLedger();
+  const next = { date: ledger.date, count: ledger.count + 1 };
+  await chrome.storage.local.set({ [LEDGER_KEY]: next });
+  return next;
+}
+
+async function resetLedger() {
+  await chrome.storage.local.set({ [LEDGER_KEY]: { date: today(), count: 0 } });
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { DEFAULTS, loadSettings, saveSettings };
+  module.exports = {
+    DEFAULTS, loadSettings, saveSettings,
+    readLedger, canPlaceOrder, recordOrder, resetLedger,
+  };
 }

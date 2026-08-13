@@ -66,10 +66,45 @@
     <input type="checkbox" id="goToCartAfterAdd">
   </div>
 
+  <hr>
+  <h1>Checkout</h1>
+  <p class="sub">Uses the card and address already saved in your retailer account.</p>
+
+  <div class="row">
+    <label for="autoCheckout">Auto-continue to checkout</label>
+    <input type="checkbox" id="autoCheckout">
+  </div>
+  <p class="hint">Walks cart → checkout, then stops with the order ready.</p>
+
+  <div class="row">
+    <label for="placeOrder"><strong>Place the order</strong> — spends money</label>
+    <input type="checkbox" id="placeOrder">
+  </div>
+  <p class="hint">Requires auto-continue. Submits without asking you first.</p>
+
+  <div class="row">
+    <label for="maxOrderTotal">Max order total ($)</label>
+    <input type="number" id="maxOrderTotal" min="1" step="1">
+  </div>
+  <p class="hint">Checked against the total on the checkout page, after tax and shipping. Unreadable total = no submit.</p>
+
+  <div class="row">
+    <label for="maxOrderItems">Max items in order</label>
+    <input type="number" id="maxOrderItems" min="1" step="1">
+  </div>
+
+  <div class="row">
+    <label for="maxOrdersPerDay">Max orders per day</label>
+    <input type="number" id="maxOrdersPerDay" min="1" step="1">
+  </div>
+  <p class="hint">Counted before submitting, shared across tabs, resets daily.
+    <a href="#" id="resetLedger">reset today's count</a></p>
+
   <div class="danger">
-    <strong>It stops at the cart.</strong> This never enters payment details,
-    submits an order, or answers a CAPTCHA. If a bot check appears it stops and
-    alerts you so you can clear it yourself.
+    <strong>No CAPTCHA handling, ever.</strong> If a bot check appears at any
+    step it stops and alerts you. It also never enters card details — there's
+    nowhere in this extension a card number could be stored.
+    Press <strong>Esc</strong> or the on-page <strong>STOP</strong> banner to abort.
   </div>
 
   <div id="status"></div>

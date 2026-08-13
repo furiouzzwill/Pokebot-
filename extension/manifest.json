@@ -19,6 +19,16 @@
       ],
       "js": ["config.js", "content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.walmart.com/cart*",
+        "https://www.walmart.com/checkout*",
+        "https://www.target.com/cart*",
+        "https://www.target.com/co-*"
+      ],
+      "js": ["config.js", "checkout.js"],
+      "run_at": "document_idle"
     }
   ],
   "options_page": "options.html",

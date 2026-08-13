@@ -3,8 +3,9 @@
 Tools for catching Pokémon TCG drops at Walmart and Target. Two pieces:
 
 1. **`extension/`** — a Chrome extension that runs in *your* logged-in browser,
-   watches a product tab you have open, and clicks **Add to cart** the instant
-   the item goes live. This is the one that actually carts things.
+   watches a product tab you have open, carts the item the instant it goes
+   live, walks through checkout, and can place the order. This is the one that
+   actually buys things.
 2. **`src/`** — a standalone Node monitor that polls product pages and alerts
    you. Useful, but see the blocking caveat below before you rely on it.
 
@@ -27,10 +28,14 @@ anything. You're already logged in, already trusted, already holding valid
 session cookies. Nothing needs bypassing. That's why the carting logic lives in
 an extension: it's both the legitimate approach and the *faster* one.
 
-**Where it stops:** the extension adds to cart and hands off. It doesn't enter
-payment details, submit orders, or answer CAPTCHAs. Set up a saved card and
-address in your retailer account beforehand and checkout is a few taps —
-carting is the part that's time-critical, and that's the part automated.
+**Two things it will never do**, and these aren't settings:
+
+- **Answer a CAPTCHA.** If a bot check appears at any step it stops and alerts
+  you to solve it yourself. That's the line, and it's why this approach works
+  at all — nothing here is trying to look like something it isn't.
+- **Touch your card details.** Checkout uses the payment method and address
+  already saved in your retailer account. There is nowhere in this extension a
+  card number could be stored, and nothing is transmitted anywhere.
 
 ## Quick start — the extension (start here)
 
@@ -43,15 +48,43 @@ carting is the part that's time-critical, and that's the part automated.
    lands it logs the click it *would* have made.
 5. Once you've seen it fire correctly, turn **dry run off**. Now it clicks.
 
+6. To let it check out too, turn on **Auto-continue to checkout**, then
+   **Place the order**. Set your **max order total** first.
+
 Settings:
 
 | Setting | What it does |
 |---|---|
 | **Armed** | Off = alert only, never clicks. |
-| **Dry run** | Logs the click without making it. Default on. |
+| **Dry run** | Logs every click without making it. Default on. |
 | **Max price** | Won't cart above this — guards against a marketplace reseller listing replacing the sold-out first-party one. |
 | **Re-check every** | Safety-net poll; a MutationObserver catches most changes instantly. |
 | **Reload page every** | 0 = never. Use 30s+; faster invites a bot check. |
+| **Auto-continue to checkout** | Walks cart → checkout, then stops with the order ready to submit. |
+| **Place the order** | Submits it. Requires auto-continue. Default off. |
+| **Max order total** | Checked against the total the checkout page actually shows, after tax and shipping. |
+| **Max items in order** | Refuses to submit a cart bigger than this. |
+| **Max orders per day** | Persisted across tabs and reloads. Default 1. |
+
+### The order-submission guardrails
+
+Money-spending is gated on all of these, and any failure is terminal rather
+than a retry:
+
+- **Unreadable total = no submit.** If it can't parse the order total with
+  confidence it refuses rather than submitting blind. Same principle as the
+  cart logic refusing to click without a price.
+- **The total it checks is the checkout page's own total**, after tax and
+  shipping — not the item price. A sneaky extra line item can't slip through
+  under an item-level cap.
+- **The daily budget is claimed *before* the click**, not after. The click
+  navigates the page away, so an after-the-fact write would never land and the
+  guard would be decorative.
+- **Esc, or the STOP button** in the on-page banner, aborts immediately. The
+  banner is always visible while it's live, in red when it's about to spend.
+
+All of these have tests that assert zero clicks on the submit button. That's
+the assertion that matters — see `test/checkout.test.js`.
 
 Notes from testing:
 
@@ -152,10 +185,11 @@ If you want carting today, use the extension — it doesn't have this problem.
 
 ```
 extension/
-  manifest.json   MV3; content script scoped to walmart.com/ip/* and target.com/p/*
-  content.js      Watches the page, finds an enabled cart control, clicks it
+  manifest.json   MV3; content scripts scoped to PDP, cart and checkout pages
+  content.js      PDP: watches for an enabled cart control and clicks it
+  checkout.js     Cart -> checkout -> submit, with the refusal checks
   background.js   Desktop notifications; pulls the tab to the front on a hit
-  config.js       Settings + defaults (dry run on, unarmed, $100 cap)
+  config.js       Settings, defaults, and the persisted daily order ledger
   options.html/js Settings UI
 
 src/
