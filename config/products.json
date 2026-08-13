@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Pokemon TCG: Scarlet & Violet Elite Trainer Box",
+    "url": "https://www.walmart.com/ip/example/1234567890",
+    "enabled": false,
+    "notes": "Replace with a real product URL. enabled:false products are skipped."
+  },
+  {
+    "name": "Pokemon TCG: Booster Bundle",
+    "url": "https://www.target.com/p/example/-/A-12345678",
+    "enabled": false,
+    "notes": "Target URLs must contain the /-/A-<tcin> segment."
+  }
+]
