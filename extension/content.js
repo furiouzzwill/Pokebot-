@@ -35,6 +35,8 @@ const state = {
   settings: null,
   carts: 0,
   stopped: false,
+  // Whether the current stop is one a settings change is allowed to lift.
+  stopResumable: false,
   lastSignature: '',
   observer: null,
   pollTimer: null,
@@ -54,13 +56,51 @@ function report(kind, detail) {
   }
 }
 
-/** Bail out entirely -- used for challenge pages and for hard stops. */
-function stop(reason) {
-  if (state.stopped) return;
-  state.stopped = true;
+function teardownWatchers() {
   state.observer?.disconnect();
+  state.observer = null;
   clearInterval(state.pollTimer);
   clearTimeout(state.reloadTimer);
+  state.pollTimer = null;
+  state.reloadTimer = null;
+}
+
+function scheduleReload() {
+  clearTimeout(state.reloadTimer);
+  state.reloadTimer = null;
+  if (state.settings.reloadSeconds > 0) {
+    state.reloadTimer = setTimeout(() => {
+      if (!state.stopped) location.reload();
+    }, state.settings.reloadSeconds * 1000);
+  }
+}
+
+function startWatchers() {
+  state.observer = new MutationObserver(() => check());
+  state.observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['disabled', 'aria-disabled', 'class'],
+  });
+  state.pollTimer = setInterval(check, state.settings.pollMs);
+  scheduleReload();
+}
+
+/**
+ * Bail out entirely -- used for challenge pages and for hard stops.
+ *
+ * `resumable` marks a stop that holds only because of what a setting currently
+ * says: a price over the cap, or dry run being on. Change that setting and the
+ * tab picks up where it left off. A bot check is not resumable -- it needs a
+ * human -- and neither is a cart that already happened, which must not be
+ * repeated by toggling something in the dashboard.
+ */
+function stop(reason, { resumable = false } = {}) {
+  if (state.stopped) return;
+  state.stopped = true;
+  state.stopResumable = resumable;
+  teardownWatchers();
   report('stopped', reason);
 }
 
@@ -146,7 +186,7 @@ async function attemptCart(button) {
 
   if (price > settings.maxPrice) {
     report('skipped', `Price $${price.toFixed(2)} is over your $${settings.maxPrice} cap. Probably a reseller listing.`);
-    stop('price cap exceeded');
+    stop('price cap exceeded', { resumable: true });
     return false;
   }
 
@@ -159,7 +199,7 @@ async function attemptCart(button) {
 
   if (settings.dryRun) {
     report('dry-run', `Would have clicked Add to cart at $${price.toFixed(2)}. Turn off dry run to go live.`);
-    stop('dry run complete');
+    stop('dry run complete', { resumable: true });
     return false;
   }
 
@@ -197,6 +237,53 @@ function check() {
   if (button) attemptCart(button);
 }
 
+/**
+ * Re-read settings without a page reload.
+ *
+ * The dashboard's toggles read as if they take effect immediately. They did
+ * not: settings were loaded once at startup, so a tab opened before a change
+ * kept running under the old ones. Turning dry run off mid-drop left the
+ * watching tab still in dry run, and turning it on did not make an already
+ * live tab safe -- the dangerous direction of the same bug.
+ */
+async function applySettings() {
+  const previous = state.settings;
+  const next = await loadSettings();
+  if (!previous) return;
+
+  // The dashboard re-broadcasts the whole settings object on unrelated state
+  // changes, so compare rather than trusting the event to mean something.
+  const changed = Object.keys(next).some((key) => next[key] !== previous[key]);
+  if (!changed) return;
+
+  state.settings = next;
+
+  // check() short-circuits while the button looks the same as last time, but
+  // the verdict depends on settings too -- clear it or nothing is re-examined.
+  state.lastSignature = '';
+
+  if (state.stopped) {
+    if (!state.stopResumable) return;
+    state.stopped = false;
+    state.stopResumable = false;
+    report(
+      'watching',
+      `resumed on a settings change | armed=${next.armed} dryRun=${next.dryRun} cap=$${next.maxPrice}`,
+    );
+    startWatchers();
+    check();
+    return;
+  }
+
+  if (next.pollMs !== previous.pollMs) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = setInterval(check, next.pollMs);
+  }
+  if (next.reloadSeconds !== previous.reloadSeconds) scheduleReload();
+
+  check();
+}
+
 async function init() {
   state.settings = await loadSettings();
 
@@ -205,22 +292,11 @@ async function init() {
     `${SITE} | armed=${state.settings.armed} dryRun=${state.settings.dryRun} cap=$${state.settings.maxPrice}`,
   );
 
-  state.observer = new MutationObserver(() => check());
-  state.observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['disabled', 'aria-disabled', 'class'],
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area === 'sync') applySettings();
   });
 
-  state.pollTimer = setInterval(check, state.settings.pollMs);
-
-  if (state.settings.reloadSeconds > 0) {
-    state.reloadTimer = setTimeout(() => {
-      if (!state.stopped) location.reload();
-    }, state.settings.reloadSeconds * 1000);
-  }
-
+  startWatchers();
   check();
 }
 

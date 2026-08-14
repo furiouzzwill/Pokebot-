@@ -142,6 +142,12 @@ Settings:
 | **Max items in order** | Refuses to submit a cart bigger than this. |
 | **Max orders per day** | Persisted across tabs and reloads. Default 1. |
 
+Changing any of these applies to tabs already open — you don't reload to make
+a toggle count. A tab that stopped *because* of a setting picks up again when
+that setting changes: raise the cap on something it refused and it re-checks.
+A bot check and an already-placed cart are the exceptions, and stay stopped —
+one needs you, and the other must not be repeated by flipping a switch.
+
 ### The order-submission guardrails
 
 Money-spending is gated on all of these, and any failure is terminal rather

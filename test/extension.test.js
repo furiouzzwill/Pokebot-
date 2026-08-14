@@ -58,7 +58,7 @@ function targetHtml() {
 }
 
 /** Load `html` at `url`, run the content script, optionally mutate, collect events. */
-async function drive({ html, url, settings, mutate, trackClicks = false }) {
+async function drive({ html, url, settings, mutate, settingsChange, trackClicks = false }) {
   const browser = await chromium.launch(launchOptions());
   try {
     const page = await browser.newPage();
@@ -68,11 +68,22 @@ async function drive({ html, url, settings, mutate, trackClicks = false }) {
         : route.abort(),
     );
 
+    // Settings live in a mutable object with real onChanged plumbing, so a test
+    // can change one the way the dashboard does and see what the tab does next.
     await page.addInitScript(`
       window.__events = []; window.__clicks = 0;
+      window.__settings = ${JSON.stringify(settings)};
+      window.__storageListeners = [];
       window.chrome = {
         runtime: { sendMessage: (m) => window.__events.push(m) },
-        storage: { sync: { get: async () => (${JSON.stringify(settings)}) } },
+        storage: {
+          sync: { get: async () => ({ ...window.__settings }) },
+          onChanged: { addListener: (fn) => window.__storageListeners.push(fn) },
+        },
+      };
+      window.__changeSettings = (patch) => {
+        Object.assign(window.__settings, patch);
+        for (const fn of window.__storageListeners) fn({}, 'sync');
       };
     `);
     await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -93,6 +104,11 @@ async function drive({ html, url, settings, mutate, trackClicks = false }) {
 
     if (mutate) {
       await page.evaluate(mutate);
+      await page.waitForTimeout(1200);
+    }
+
+    if (settingsChange) {
+      await page.evaluate((patch) => window.__changeSettings(patch), settingsChange);
       await page.waitForTimeout(1200);
     }
 
@@ -161,4 +177,87 @@ test('live mode clicks the real button exactly once', { skip: SKIP }, async () =
   });
   assert.ok(kinds(events).includes('carted'));
   assert.equal(clicks, 1);
+});
+
+// --- Settings applied without a page reload ----------------------------------
+//
+// Settings used to be read once at startup, so the dashboard's toggles did
+// nothing to a tab that was already watching. That is a live-fire hazard in
+// both directions: dry run left on when you meant to buy, and -- worse -- left
+// off when you meant to stop.
+
+test('a raised price cap resumes a tab that stopped under the old one', { skip: SKIP }, async () => {
+  const { events } = await drive({
+    html: targetHtml().replace('$24.99', '$449.00'),
+    url: TARGET_URL,
+    settings: { ...ARMED, maxPrice: 100 },
+    mutate: ENABLE_BUTTON,
+    settingsChange: { maxPrice: 500 },
+  });
+
+  assert.ok(kinds(events).includes('skipped'), 'expected the first pass to refuse');
+  assert.ok(
+    kinds(events).includes('in-stock'),
+    'the tab never re-examined the button after the cap was raised',
+  );
+  assert.ok(kinds(events).includes('dry-run'));
+});
+
+test('turning dry run off goes live without a reload', { skip: SKIP }, async () => {
+  const { events, clicks } = await drive({
+    html: targetHtml(),
+    url: TARGET_URL,
+    settings: ARMED,
+    mutate: ENABLE_BUTTON,
+    settingsChange: { dryRun: false },
+    trackClicks: true,
+  });
+
+  assert.ok(kinds(events).includes('dry-run'), 'expected the dry run pass first');
+  assert.ok(kinds(events).includes('carted'), 'dry run off did not take effect');
+  assert.equal(clicks, 1, 'the real button should be clicked exactly once');
+});
+
+test('a bot check is never resumed by a settings change', { skip: SKIP }, async () => {
+  // No trackClicks here: a challenge interstitial has no cart button to watch.
+  const { events } = await drive({
+    html: fs.readFileSync(path.join(FIXTURES, 'walmart-bot-challenge.html'), 'utf8'),
+    url: 'https://www.walmart.com/ip/thing/1234567890',
+    settings: ARMED,
+    settingsChange: { dryRun: false, maxPrice: 999 },
+  });
+
+  assert.ok(kinds(events).includes('challenge'));
+  assert.ok(!kinds(events).includes('carted'));
+  // A challenge stop needs a human, not a toggle. Resuming into one would be
+  // the extension working around a bot check, which it must never do.
+  assert.ok(
+    !events.some((e) => e.kind === 'watching' && /resumed/.test(e.detail || '')),
+    'a settings change restarted a tab that had hit a bot check',
+  );
+});
+
+test('disarming stops a watching tab from carting', { skip: SKIP }, async () => {
+  const { events, clicks } = await drive({
+    html: targetHtml(),
+    url: TARGET_URL,
+    settings: { ...ARMED, dryRun: false, armed: false },
+    mutate: ENABLE_BUTTON,
+    settingsChange: { maxPrice: 999 },
+    trackClicks: true,
+  });
+
+  assert.ok(kinds(events).includes('not-armed'));
+  assert.ok(!kinds(events).includes('carted'));
+  assert.equal(clicks, 0);
+});
+
+test('the content script registers a settings listener', () => {
+  // Runs without Playwright, so CI (which skips the browser tests) still fails
+  // if the live-settings wiring is removed.
+  const source = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
+  assert.match(source, /chrome\.storage\?\.onChanged\?\.addListener/);
+  assert.match(source, /function applySettings/);
+  assert.match(source, /stop\('price cap exceeded', \{ resumable: true \}\)/);
+  assert.match(source, /stop\('challenge page'\)/, 'a challenge stop must not be resumable');
 });
