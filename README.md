@@ -1,9 +1,12 @@
 # pokebot
 
-Tools for catching Pokémon TCG drops at Walmart and Target. Three pieces:
+Tools for catching Pokémon TCG drops at Walmart and Target. Four pieces:
 
-1. **`app/`** — a local dashboard. Manage the watchlist, control everything
-   from one place, and watch live status across every SKU. **Start here.**
+0. **`desktop/`** — an Electron wrapper: the dashboard as a double-clickable
+   app with a tray icon, no terminal and no Node install. It hosts the same
+   server in-process and changes nothing about how the automation works.
+1. **`app/`** — the dashboard itself. Manage the watchlist, control everything
+   from one place, and watch live status across every SKU.
 2. **`extension/`** — a Chrome extension that runs in *your* logged-in browser.
    The dashboard tells it what to watch; it opens a pinned tab per SKU, carts
    the item the instant it goes live, walks through checkout, and can place the
@@ -51,14 +54,48 @@ an extension: it's both the legitimate approach and the *faster* one.
 
 ## Quick start
 
+Pick the path that matches who's installing.
+
+### A. Desktop app — no terminal, nothing to install
+
+Download the installer for your platform from the
+[Releases page](../../releases) and run it. Node is bundled; there is nothing
+else to set up.
+
+The app runs in the tray/menu bar. Closing the window keeps it watching —
+quit from the tray icon.
+
+> Builds are unsigned, so the first launch shows a publisher warning.
+> macOS: right-click the app → **Open** → **Open**.
+> Windows: **More info** → **Run anyway**.
+
+If Releases is empty, run the **Build desktop app** workflow from the Actions
+tab (or push a `v*` tag) and it will build all three installers.
+
+### B. Just the dashboard, from source
+
 ```bash
-npm install
-npm run app          # dashboard at http://127.0.0.1:8787
+npm install --omit=dev     # skips Electron (~300MB) — you don't need it
+npm run app                # dashboard at http://127.0.0.1:8787
 ```
 
-Then load the extension: Chrome → `chrome://extensions` → **Developer mode** →
-**Load unpacked** → select `extension/`. It connects to the dashboard on its
-own; the header pill flips to **extension connected**.
+`--omit=dev` matters: a plain `npm install` pulls the Electron toolchain,
+which is a large download and unnecessary unless you're building installers.
+
+### C. Working on the desktop app
+
+```bash
+npm install                # includes Electron + electron-builder
+npm run desktop            # launch the app from source
+npm run build:desktop      # build an installer for your current platform
+```
+
+### Then: the extension
+
+However you started the dashboard, the clicking still happens in your real
+Chrome. Load it once: `chrome://extensions` → **Developer mode** →
+**Load unpacked** → select `extension/`. It finds the dashboard on its own and
+the header pill flips to **extension connected**.
 
 From there, everything is in the dashboard:
 
@@ -223,6 +260,9 @@ If you want carting today, use the extension — it doesn't have this problem.
 ## Architecture
 
 ```
+desktop/
+  main.js         Electron shell: hosts the dashboard, window + tray, single instance
+
 app/
   server.js       HTTP + WebSocket hub; static UI, auth, broadcast
   state.js        Watchlist, settings and history; atomic JSON persistence

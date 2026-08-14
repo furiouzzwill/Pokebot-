@@ -24,16 +24,16 @@ let WebSocket;
 let server;
 let port;
 
+let dashboard;
+
 test.before(async () => {
   ({ WebSocket } = require('ws'));
   if (fs.existsSync(realState)) fs.unlinkSync(realState);
   delete require.cache[stateModule];
-  ({ server } = require('../app/server'));
-  await new Promise((resolve) => {
-    if (server.listening) return resolve();
-    server.once('listening', resolve);
-  });
-  port = server.address().port;
+  const { createDashboard } = require('../app/server');
+  dashboard = createDashboard({ port: 0 });
+  server = dashboard.server;
+  port = await dashboard.listen();
 });
 
 test.after(() => {

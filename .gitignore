@@ -5,3 +5,4 @@ logs/*.log
 *.tgz
 .DS_Store
 config/app-state.json
+dist/
