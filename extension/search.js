@@ -27,9 +27,40 @@ const PRODUCT_PATTERNS = {
   walmart: /^\/ip\/(?:[^/?#]+\/)?(\d{4,})/,
 };
 
+/**
+ * A results page is a snapshot: it never updates itself, so the page must be
+ * re-queried to see a product that appeared after load. Without this the whole
+ * watcher is useless for its actual job -- you'd load a search in the evening
+ * and its DOM would still show the evening's results when the drop lands.
+ */
+const RELOAD_MS = 90 * 1000;
+const RELOAD_JITTER_MS = 20 * 1000;
+
+// Reported ids survive the reload in sessionStorage, so a refresh doesn't
+// re-announce the whole page as new. Cleared when the tab closes.
+const SEEN_KEY = `pokebot:seen:${location.pathname}${location.search}`;
+
+function loadSeen() {
+  try {
+    return new Set(JSON.parse(sessionStorage.getItem(SEEN_KEY) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeen(seen) {
+  try {
+    sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-500)));
+  } catch {
+    // Storage full or blocked; dedupe falls back to the server's, which keys
+    // on product URL anyway.
+  }
+}
+
 const state = {
-  seen: new Set(),
+  seen: loadSeen(),
   timer: null,
+  reloadTimer: null,
   observer: null,
   reported: 0,
 };
@@ -84,6 +115,7 @@ function scrape() {
 function report(products) {
   if (products.length === 0) return;
   for (const product of products) state.seen.add(product.id);
+  saveSeen(state.seen);
   state.reported += products.length;
 
   log(`found ${products.length} product(s)`, products.map((p) => p.title || p.id));
@@ -122,7 +154,18 @@ function tick() {
 
 function stop() {
   clearInterval(state.timer);
+  clearTimeout(state.reloadTimer);
   state.observer?.disconnect();
+}
+
+function scheduleReload() {
+  // Jittered so several open search tabs don't re-query in lockstep, which is
+  // both wasteful and a conspicuous traffic pattern.
+  const delay = RELOAD_MS + Math.floor(Math.random() * RELOAD_JITTER_MS * 2) - RELOAD_JITTER_MS;
+  state.reloadTimer = setTimeout(() => {
+    // Reloading into a bot check would just re-trigger it.
+    if (!isChallenge()) location.reload();
+  }, Math.max(30000, delay));
 }
 
 function start() {
@@ -131,8 +174,9 @@ function start() {
   state.observer = new MutationObserver(() => tick());
   state.observer.observe(document.body, { childList: true, subtree: true });
   state.timer = setInterval(tick, 3000);
+  scheduleReload();
   tick();
-  log(`watching ${SITE} results for new products`);
+  log(`watching ${SITE} results; re-querying about every ${Math.round(RELOAD_MS / 1000)}s`);
 }
 
 start();

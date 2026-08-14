@@ -227,6 +227,22 @@ Finds land in a review queue and are **not watched until you press Watch**.
 specific reason: an auto-added URL inherits your live settings, so a bad
 keyword match could be armed against your real payment method.
 
+### Making the search tab actually useful
+
+Two things matter more than they look:
+
+**It re-queries, roughly every 90 seconds.** A results page is a snapshot —
+it never updates itself. Without a periodic reload the tab would still be
+showing the evening's results when the drop lands at 3am, and the watcher
+would find nothing. Reported product ids are kept in `sessionStorage` so a
+refresh doesn't re-announce the whole page.
+
+**Sort by newest, don't use a plain search.** Relevance ranking buries a brand
+new listing under established best-sellers, so a fresh SKU can take a long
+time to surface — or never appear on page one at all. Point the tab at a
+category sorted newest-first instead of `?searchTerm=pokemon`; the watcher
+takes any Walmart or Target search, browse, or category URL.
+
 ### Why the search-page watcher matches on URL shape
 
 Product links are found by path pattern (`/p/…/-/A-<tcin>`, `/ip/…/<id>`),
