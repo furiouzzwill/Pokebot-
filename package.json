@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.js watch",
     "check": "node src/index.js check",
-    "test": "node --test \"test/**/*.test.js\"",
+    "test": "node --test test/*.test.js",
     "test:extension": "node --test test/extension.test.js",
     "app": "node app/server.js",
     "dashboard": "node app/server.js",
