@@ -10,6 +10,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const vm = require('vm');
 
@@ -56,6 +57,56 @@ test('electron is a dev dependency, not a runtime one', () => {
   // use the dashboard or the CLI monitor.
   assert.ok(!pkg.dependencies.electron, 'electron must not be a runtime dependency');
   assert.ok(pkg.devDependencies.electron, 'electron should be a devDependency');
+});
+
+test('the packaged app redirects its state file off the install directory', () => {
+  // Packaged, __dirname is inside app.asar. state.js defaulting there made the
+  // first settings write throw ENOTDIR out of mkdirSync and crash the main
+  // process. main.js must point the state somewhere writable *before* it pulls
+  // in the dashboard, because state.js resolves the path at module load.
+  const source = fs.readFileSync(path.join(ROOT, 'desktop', 'main.js'), 'utf8');
+
+  const assigned = source.indexOf('POKEBOT_STATE_FILE');
+  const requiresDashboard = source.indexOf("require('../app/server')");
+
+  assert.notStrictEqual(assigned, -1, 'main.js never sets POKEBOT_STATE_FILE');
+  assert.notStrictEqual(requiresDashboard, -1, 'main.js no longer requires the dashboard');
+  assert.ok(
+    assigned < requiresDashboard,
+    'POKEBOT_STATE_FILE must be set before app/server is required, or state.js '
+      + 'will already have resolved the unwritable in-archive path',
+  );
+  assert.match(
+    source,
+    /app\.getPath\(['"]userData['"]\)/,
+    'the state file should land in Electron userData, not the install directory',
+  );
+});
+
+test('state.js honours POKEBOT_STATE_FILE, creating parent directories', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pokebot-statepath-'));
+  // Nested, so this also covers the mkdirSync that ENOTDIR was thrown from.
+  const target = path.join(dir, 'userData', 'app-state.json');
+
+  const previous = process.env.POKEBOT_STATE_FILE;
+  process.env.POKEBOT_STATE_FILE = target;
+  delete require.cache[require.resolve('../app/state')];
+
+  try {
+    const state = require('../app/state');
+    assert.strictEqual(state.STATE_FILE, target);
+
+    state.setSettings({ armed: true });
+
+    assert.ok(fs.existsSync(target), 'settings write did not reach the override path');
+    const written = JSON.parse(fs.readFileSync(target, 'utf8'));
+    assert.strictEqual(written.settings.armed, true);
+  } finally {
+    if (previous === undefined) delete process.env.POKEBOT_STATE_FILE;
+    else process.env.POKEBOT_STATE_FILE = previous;
+    delete require.cache[require.resolve('../app/state')];
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the app can be built without a bundled retailer credential', () => {

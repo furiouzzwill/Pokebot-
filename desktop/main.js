@@ -12,6 +12,13 @@
 const path = require('path');
 const { app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage } = require('electron');
 
+// Must be set before the dashboard is required: state.js resolves its path and
+// reads the file at module load. The packaged default would point inside
+// app.asar, where the first settings write dies with ENOTDIR.
+if (!process.env.POKEBOT_STATE_FILE) {
+  process.env.POKEBOT_STATE_FILE = path.join(app.getPath('userData'), 'app-state.json');
+}
+
 const { createDashboard, DEFAULT_PORT } = require('../app/server');
 
 let mainWindow = null;

@@ -6,7 +6,13 @@ const crypto = require('crypto');
 
 const { resolveSite } = require('../src/sites');
 
-const STATE_FILE = path.resolve(__dirname, '..', 'config', 'app-state.json');
+// Running from source this sits next to the repo's config/. The desktop build
+// overrides it, because there __dirname is inside app.asar -- an archive file,
+// not a directory, so creating the parent fails with ENOTDIR on the first
+// write. The install directory isn't user-writable either.
+const STATE_FILE = process.env.POKEBOT_STATE_FILE
+  ? path.resolve(process.env.POKEBOT_STATE_FILE)
+  : path.resolve(__dirname, '..', 'config', 'app-state.json');
 const MAX_HISTORY = 500;
 
 /**
