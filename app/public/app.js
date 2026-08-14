@@ -1,7 +1,14 @@
 'use strict';
 
-const BOOLS = ['armed', 'dryRun', 'autoCheckout', 'placeOrder'];
-const NUMS = ['maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds'];
+const BOOLS = [
+  'armed', 'dryRun', 'autoCheckout', 'placeOrder',
+  'discoveryEnabled', 'autoAddDiscoveries',
+];
+const NUMS = [
+  'maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
+  'redditIntervalMinutes',
+];
+const LISTS = ['keywords', 'subreddits'];
 
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token');
@@ -22,7 +29,9 @@ function connect() {
     const message = JSON.parse(event.data);
     if (message.type === 'state') {
       renderSettings(message.settings);
+      renderRules(message.rules);
       renderWatchlist(message.watchlist);
+      renderDiscoveries(message.discoveries || []);
       renderLog(message.history);
     } else if (message.type === 'event') {
       appendLog(message.entry);
@@ -144,6 +153,79 @@ function renderWatchlist(items) {
   $('countLabel').textContent = items.length ? `${active} of ${items.length} active` : '';
 }
 
+function renderRules(rules) {
+  if (!rules) return;
+  suppressSend = true;
+  for (const key of LISTS) {
+    if (Array.isArray(rules[key])) $(key).value = rules[key].join(', ');
+  }
+  suppressSend = false;
+}
+
+function pushRules() {
+  if (suppressSend) return;
+  const rules = {};
+  for (const key of LISTS) {
+    rules[key] = $(key).value.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  send({ type: 'setRules', rules });
+}
+
+function renderDiscoveries(items) {
+  const open = items.filter((item) => !item.dismissed);
+  const list = $('discoveries');
+  list.textContent = '';
+
+  for (const item of open.slice(0, 25)) {
+    const li = document.createElement('li');
+
+    const kind = document.createElement('span');
+    kind.className = `kind-tag ${item.kind === 'product' ? 'product' : ''}`;
+    kind.textContent = item.kind === 'product' ? 'link' : 'news';
+
+    const main = document.createElement('div');
+    main.className = 'disc-main';
+    const title = document.createElement('div');
+    title.className = 'disc-title';
+    title.textContent = item.title;
+    const meta = document.createElement('div');
+    meta.className = 'disc-meta';
+    const when = new Date(item.at).toLocaleTimeString([], { hour12: false });
+    meta.textContent = [item.source, item.site, when].filter(Boolean).join(' · ');
+    main.append(title, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'disc-actions';
+
+    if (item.kind === 'product') {
+      const add = document.createElement('button');
+      add.textContent = 'Watch';
+      add.addEventListener('click', () => send({ type: 'acceptDiscovery', key: item.key }));
+      actions.append(add);
+    } else if (item.url) {
+      const open = document.createElement('a');
+      open.href = item.url;
+      open.target = '_blank';
+      open.rel = 'noreferrer';
+      open.textContent = 'Read';
+      open.className = 'link';
+      actions.append(open);
+    }
+
+    const hide = document.createElement('button');
+    hide.className = 'ghost';
+    hide.textContent = 'Hide';
+    hide.addEventListener('click', () => send({ type: 'dismissDiscovery', key: item.key }));
+    actions.append(hide);
+
+    li.append(kind, main, actions);
+    list.append(li);
+  }
+
+  $('discoveryHint').style.display = open.length ? 'none' : '';
+  $('discoveryCount').textContent = open.length ? `${open.length} waiting` : '';
+}
+
 function logRow(entry) {
   const li = document.createElement('li');
 
@@ -189,6 +271,10 @@ function pushSettings() {
 
 for (const key of [...BOOLS, ...NUMS]) {
   $(key).addEventListener('change', pushSettings);
+}
+
+for (const key of LISTS) {
+  $(key).addEventListener('change', pushRules);
 }
 
 $('addForm').addEventListener('submit', (event) => {

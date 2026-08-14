@@ -26,10 +26,35 @@ const DEFAULT_SETTINGS = {
   maxOrderTotal: 150,
   maxOrderItems: 2,
   maxOrdersPerDay: 1,
+
+  // --- Discovery ------------------------------------------------------------
+  // Finds products you haven't added yet: announcements from subreddits, and
+  // product links appearing on retailer search pages you have open.
+  discoveryEnabled: true,
+  // Minutes between subreddit polls. Reddit rate-limits unauthenticated
+  // polling, so this is deliberately unhurried; the search-page watcher is
+  // what catches a URL quickly.
+  redditIntervalMinutes: 5,
+  // Add matching finds straight to the watchlist, enabled. Off by default:
+  // an auto-added URL that turns out to be the wrong item would be armed
+  // against your real payment method.
+  autoAddDiscoveries: false,
+};
+
+/** Subreddits and keywords are lists, kept out of the numeric/boolean block. */
+const DEFAULT_RULES = {
+  subreddits: ['pkmntcgdeals', 'PokeInvesting'],
+  keywords: ['pokemon', 'pokémon', 'elite trainer', 'booster bundle', 'etb'],
 };
 
 function emptyState() {
-  return { settings: { ...DEFAULT_SETTINGS }, watchlist: [], history: [] };
+  return {
+    settings: { ...DEFAULT_SETTINGS },
+    rules: { ...DEFAULT_RULES },
+    watchlist: [],
+    history: [],
+    discoveries: [],
+  };
 }
 
 function load() {
@@ -37,8 +62,10 @@ function load() {
     const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
     return {
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
+      rules: { ...DEFAULT_RULES, ...(parsed.rules || {}) },
       watchlist: Array.isArray(parsed.watchlist) ? parsed.watchlist : [],
       history: Array.isArray(parsed.history) ? parsed.history : [],
+      discoveries: Array.isArray(parsed.discoveries) ? parsed.discoveries : [],
     };
   } catch (err) {
     if (err.code !== 'ENOENT') {
@@ -68,11 +95,13 @@ const status = new Map();
 function snapshot() {
   return {
     settings: state.settings,
+    rules: state.rules,
     watchlist: state.watchlist.map((item) => ({
       ...item,
       status: status.get(item.id) || { kind: 'idle', detail: '', at: null },
     })),
     history: state.history.slice(-100),
+    discoveries: state.discoveries.slice(0, 40),
   };
 }
 
@@ -161,8 +190,68 @@ function recordEvent({ kind, detail, url, site }) {
   return entry;
 }
 
+const MAX_DISCOVERIES = 200;
+
+/**
+ * Record something discovery found. Deduped on `key` (a reddit post id, or a
+ * product URL) so the same find re-seen on every poll doesn't pile up.
+ *
+ * @returns {object|null} the stored candidate, or null if already known.
+ */
+function addDiscovery({ key, kind, title, url, site, source, matched = [] }) {
+  if (!key) return null;
+  if (state.discoveries.some((d) => d.key === key)) return null;
+
+  // A product already on the watchlist is not a discovery.
+  if (url && state.watchlist.some((item) => item.url === url)) return null;
+
+  const entry = {
+    key,
+    kind, // 'product' (has a usable URL) | 'announcement' (a heads-up only)
+    title: title || url || key,
+    url: url || '',
+    site: site || '',
+    source: source || '',
+    matched,
+    at: new Date().toISOString(),
+    dismissed: false,
+  };
+
+  state.discoveries.unshift(entry);
+  if (state.discoveries.length > MAX_DISCOVERIES) {
+    state.discoveries = state.discoveries.slice(0, MAX_DISCOVERIES);
+  }
+  persist();
+  return entry;
+}
+
+function dismissDiscovery(key) {
+  const entry = state.discoveries.find((d) => d.key === key);
+  if (!entry) return null;
+  entry.dismissed = true;
+  persist();
+  return entry;
+}
+
+function setRules(patch) {
+  const next = { ...state.rules };
+  for (const field of ['subreddits', 'keywords']) {
+    if (!Array.isArray(patch?.[field])) continue;
+    next[field] = patch[field]
+      .map((value) => String(value).trim())
+      .filter((value) => value !== '');
+  }
+  state.rules = next;
+  persist();
+  return next;
+}
+
 module.exports = {
   DEFAULT_SETTINGS,
+  DEFAULT_RULES,
+  addDiscovery,
+  dismissDiscovery,
+  setRules,
   STATE_FILE,
   getState,
   snapshot,

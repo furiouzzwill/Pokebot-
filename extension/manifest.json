@@ -30,6 +30,17 @@
       ],
       "js": ["config.js", "checkout.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.walmart.com/search*",
+        "https://www.walmart.com/browse/*",
+        "https://www.walmart.com/shop/*",
+        "https://www.target.com/s*",
+        "https://www.target.com/c/*"
+      ],
+      "js": ["search.js"],
+      "run_at": "document_idle"
     }
   ],
   "options_page": "options.html",

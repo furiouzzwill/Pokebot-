@@ -21,6 +21,7 @@ const os = require('os');
 const { WebSocketServer } = require('ws');
 
 const state = require('./state');
+const { fetchSubreddit, matchKeywords } = require('../src/discovery/reddit');
 
 const DEFAULT_PORT = 8787;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -157,13 +158,86 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
       syncAll();
     },
 
+    setRules(client, message) {
+      state.setRules(message.rules);
+      syncAll();
+    },
+
+    /** Promote a discovered product onto the watchlist. */
+    acceptDiscovery(client, message) {
+      const found = state.getState().discoveries.find((d) => d.key === message.key);
+      if (!found || !found.url) return;
+      try {
+        state.addItem({ url: found.url, name: found.title });
+        state.dismissDiscovery(found.key);
+        syncAll();
+      } catch (err) {
+        client.socket.send(JSON.stringify({ type: 'error', message: err.message }));
+      }
+    },
+
+    dismissDiscovery(client, message) {
+      state.dismissDiscovery(message.key);
+      syncAll();
+    },
+
     /** Relayed from a content script via the extension's service worker. */
     event(client, message) {
+      // Search pages report products rather than stock changes.
+      if (message.kind === 'discovered' && Array.isArray(message.products)) {
+        ingestSearchProducts(message.products);
+        return;
+      }
       const entry = state.recordEvent(message);
       broadcast({ type: 'event', entry }, 'dashboard');
       broadcast({ type: 'state', ...state.snapshot() }, 'dashboard');
     },
   };
+
+  /**
+   * Products scraped off a retailer search page. Only those whose title
+   * matches a keyword are kept -- a search results page is full of things you
+   * did not ask for.
+   */
+  function ingestSearchProducts(products) {
+    const { rules, settings } = state.getState();
+    if (!settings.discoveryEnabled) return;
+
+    let added = 0;
+    for (const product of products) {
+      if (!product || !product.url) continue;
+      const matched = matchKeywords(product.title || product.url, rules.keywords);
+      if (rules.keywords.length > 0 && matched.length === 0) continue;
+
+      const entry = state.addDiscovery({
+        key: product.url,
+        kind: 'product',
+        title: product.title || product.url,
+        url: product.url,
+        site: product.site,
+        source: 'search page',
+        matched,
+      });
+      if (entry) added += 1;
+    }
+    if (added > 0) autoAddOrAnnounce();
+  }
+
+  function autoAddOrAnnounce() {
+    const { settings } = state.getState();
+    if (settings.autoAddDiscoveries) {
+      for (const found of [...state.getState().discoveries]) {
+        if (found.dismissed || found.kind !== 'product' || !found.url) continue;
+        try {
+          state.addItem({ url: found.url, name: found.title });
+          state.dismissDiscovery(found.key);
+        } catch {
+          // Already on the list, or not a supported URL.
+        }
+      }
+    }
+    syncAll();
+  }
 
   wss.on('connection', (socket) => {
     const client = { socket, role: 'dashboard' };
@@ -188,12 +262,86 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     socket.on('error', () => clients.delete(client));
   });
 
+  /**
+   * Poll the configured subreddits for drop announcements.
+   *
+   * Announcements arrive before a listing exists, so most yield no URL -- they
+   * are still worth surfacing, because they tell you when to be at the machine.
+   * On a 429 the interval doubles for the next round rather than retrying.
+   */
+  let redditBackoff = 1;
+
+  async function pollReddit() {
+    const { settings, rules } = state.getState();
+    if (!settings.discoveryEnabled || rules.subreddits.length === 0) return;
+
+    let limited = false;
+
+    for (const subreddit of rules.subreddits) {
+      const result = await fetchSubreddit(subreddit, { keywords: rules.keywords });
+
+      if (result.rateLimited) {
+        limited = true;
+        continue;
+      }
+      if (result.error) continue;
+
+      for (const post of result.entries) {
+        // A post carrying a product link is directly actionable; one without
+        // is a heads-up, and both are worth knowing about.
+        if (post.products.length > 0) {
+          for (const product of post.products) {
+            state.addDiscovery({
+              key: product.url,
+              kind: 'product',
+              title: post.title,
+              url: product.url,
+              site: product.site,
+              source: `r/${subreddit}`,
+              matched: post.matched,
+            });
+          }
+        } else {
+          state.addDiscovery({
+            key: post.id,
+            kind: 'announcement',
+            title: post.title,
+            url: post.permalink,
+            source: `r/${subreddit}`,
+            matched: post.matched,
+          });
+        }
+      }
+    }
+
+    redditBackoff = limited ? Math.min(redditBackoff * 2, 8) : 1;
+    autoAddOrAnnounce();
+  }
+
+  let redditTimer = null;
+
+  function scheduleReddit() {
+    const { settings } = state.getState();
+    const base = Math.max(1, settings.redditIntervalMinutes) * 60 * 1000;
+    redditTimer = setTimeout(async () => {
+      try {
+        await pollReddit();
+      } catch {
+        // Discovery must never take the dashboard down.
+      }
+      scheduleReddit();
+    }, base * redditBackoff);
+    // Don't hold the process open just for discovery.
+    redditTimer.unref?.();
+  }
+
   function listen() {
     return new Promise((resolve, reject) => {
       const onError = (err) => reject(err);
       server.once('error', onError);
       server.listen(port, HOST, () => {
         server.removeListener('error', onError);
+        scheduleReddit();
         resolve(server.address().port);
       });
     });
@@ -211,7 +359,11 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     listen,
     url,
     isLan: LAN,
-    close: () => new Promise((resolve) => server.close(resolve)),
+    pollReddit, // exposed so tests can drive a round without waiting
+    close: () => new Promise((resolve) => {
+      clearTimeout(redditTimer);
+      server.close(resolve);
+    }),
   };
 }
 

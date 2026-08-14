@@ -203,6 +203,37 @@ Run the tests (all offline, against captured fixtures):
 npm test
 ```
 
+## Finding drops you haven't added yet
+
+The watchlist assumes you already know the URL. For a real drop you often
+don't — the product page may not exist until minutes before it goes live.
+Discovery fills that in from two sources, both surfaced in the dashboard's
+**Discovered** panel:
+
+- **Subreddit announcements.** Communities like r/pkmntcgdeals post
+  *"TARGET DROP TONIGHT 3am EST"* hours ahead. That's the earliest usable
+  signal there is, because it predates the listing. Read over Reddit's public
+  Atom feed, no auth. Reddit rate-limits unauthenticated polling hard, so the
+  interval is unhurried and 429s double it rather than triggering a retry.
+- **Retailer search pages.** With a Walmart or Target search or category page
+  open in a tab, the extension reports product links as they appear —
+  including ones added while you're watching. This is the fast path.
+
+Both are filtered against your keywords, so the socks that share a results
+page with the ETB don't end up on the watchlist.
+
+Finds land in a review queue and are **not watched until you press Watch**.
+`Add finds automatically` skips that step, and is off by default for a
+specific reason: an auto-added URL inherits your live settings, so a bad
+keyword match could be armed against your real payment method.
+
+### Why the search-page watcher matches on URL shape
+
+Product links are found by path pattern (`/p/…/-/A-<tcin>`, `/ip/…/<id>`),
+not by CSS class. Retailers restyle constantly but can't change those paths
+without breaking every existing link to their own catalogue, so this survives
+redesigns that would break a selector-based scraper.
+
 ## Read this before you rely on the Node monitor
 
 **Both retailers block plain HTTP clients from reading stock.** The extension

@@ -70,6 +70,52 @@
     </p>
   </section>
 
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Discovered</h2>
+      <span id="discoveryCount" class="muted"></span>
+    </div>
+    <p class="muted hint" id="discoveryHint">
+      Drop announcements from Reddit, plus products spotted on any Walmart or
+      Target search page you have open. Nothing here is watched until you add it.
+    </p>
+    <ul id="discoveries" class="items"></ul>
+  </section>
+
+  <section class="panel">
+    <h2>Discovery settings</h2>
+
+    <div class="ctl">
+      <label for="discoveryEnabled"><strong>Look for new drops</strong><span class="sub">reddit + search pages</span></label>
+      <input type="checkbox" id="discoveryEnabled">
+    </div>
+    <div class="ctl">
+      <label for="autoAddDiscoveries"><strong>Add finds automatically</strong><span class="sub">skips the review step</span></label>
+      <input type="checkbox" id="autoAddDiscoveries">
+    </div>
+    <div class="ctl num">
+      <label for="redditIntervalMinutes">Check Reddit every (min)</label>
+      <input type="number" id="redditIntervalMinutes" min="1">
+    </div>
+
+    <div class="field">
+      <label for="keywords">Keywords</label>
+      <input type="text" id="keywords" placeholder="pokemon, elite trainer, etb">
+      <p class="hint">A find must match one of these. Comma separated.</p>
+    </div>
+
+    <div class="field">
+      <label for="subreddits">Subreddits</label>
+      <input type="text" id="subreddits" placeholder="pkmntcgdeals, PokeInvesting">
+      <p class="hint">Without the r/. Comma separated.</p>
+    </div>
+
+    <p class="note">
+      Auto-add puts a found URL straight into the watchlist, where your live
+      settings apply to it. Leave it off unless you trust your keywords.
+    </p>
+  </section>
+
   <section class="panel wide">
     <div class="panel-head">
       <h2>Activity</h2>
