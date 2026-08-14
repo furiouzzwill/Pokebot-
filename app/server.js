@@ -22,6 +22,25 @@ const { WebSocketServer } = require('ws');
 
 const state = require('./state');
 const { fetchSubreddit, matchKeywords } = require('../src/discovery/reddit');
+const discordIn = require('../src/discovery/discord');
+const { postAlert, DEFAULT_EVENTS } = require('../src/discord');
+
+/**
+ * Discord credentials come from the environment, never from the state file.
+ * A webhook URL and a bot token are both bearer credentials, and app-state
+ * gets copied around, backed up and pasted into chats far too easily.
+ */
+function discordConfig() {
+  return {
+    webhookUrl: (process.env.DISCORD_WEBHOOK_URL || '').trim(),
+    botToken: (process.env.DISCORD_BOT_TOKEN || '').trim(),
+    channelIds: (process.env.DISCORD_CHANNEL_IDS || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean),
+    mention: (process.env.DISCORD_MENTION || '').trim(),
+  };
+}
 
 const DEFAULT_PORT = 8787;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -191,8 +210,40 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
       const entry = state.recordEvent(message);
       broadcast({ type: 'event', entry }, 'dashboard');
       broadcast({ type: 'state', ...state.snapshot() }, 'dashboard');
+      announce(entry);
     },
   };
+
+  /**
+   * Mirror an event into Discord.
+   *
+   * Only the events worth interrupting people for, and never blocking: a
+   * failed alert is logged and dropped rather than retried, because a drop
+   * does not wait for a webhook.
+   */
+  function announce(entry) {
+    const { webhookUrl, mention } = discordConfig();
+    const { settings } = state.getState();
+    if (!webhookUrl || !settings.discordAlerts) return;
+    if (!DEFAULT_EVENTS.includes(entry.kind)) return;
+
+    // Only the events that need a human right now get to ping the channel.
+    const shouldMention = mention && ['in-stock', 'carted', 'challenge'].includes(entry.kind);
+
+    postAlert(webhookUrl, {
+      kind: entry.kind,
+      title: entry.name || entry.title || '',
+      detail: entry.detail || '',
+      url: entry.url || '',
+      site: entry.site || '',
+      source: entry.source || '',
+      mention: shouldMention ? mention : undefined,
+    }).then((result) => {
+      if (!result.ok && result.error) {
+        console.error(`[pokebot] discord alert failed: ${result.error}`);
+      }
+    });
+  }
 
   /**
    * Products scraped off a retailer search page. Only those whose title
@@ -218,9 +269,68 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
         source: 'search page',
         matched,
       });
-      if (entry) added += 1;
+      if (entry) {
+        added += 1;
+        announce({ kind: 'discovered', name: entry.title, url: entry.url, site: entry.site, source: entry.source });
+      }
     }
     if (added > 0) autoAddOrAnnounce();
+  }
+
+  /**
+   * Poll the configured Discord channels for links your group has shared.
+   *
+   * Cursors are per channel and start empty, so the first poll takes only the
+   * latest handful rather than replaying an entire channel history as fresh
+   * finds.
+   */
+  const discordCursors = new Map();
+  let discordBackoff = 1;
+
+  async function pollDiscord() {
+    const { botToken, channelIds } = discordConfig();
+    const { settings, rules } = state.getState();
+    if (!settings.discoveryEnabled || !botToken || channelIds.length === 0) return;
+
+    let limited = false;
+
+    for (const channelId of channelIds) {
+      const afterId = discordCursors.get(channelId) || null;
+      const result = await discordIn.fetchMessages(botToken, channelId, {
+        afterId,
+        limit: afterId ? 50 : 10,
+      });
+
+      if (result.rateLimited) {
+        limited = true;
+        continue;
+      }
+      if (result.error) {
+        console.error(`[pokebot] discord channel ${channelId}: ${result.error}`);
+        continue;
+      }
+
+      const newest = discordIn.newestId(result.messages);
+      if (newest) discordCursors.set(channelId, newest);
+
+      for (const found of discordIn.parseMessages(result.messages, { keywords: rules.keywords })) {
+        const entry = state.addDiscovery({
+          key: found.key,
+          kind: found.kind,
+          title: found.title,
+          url: found.url,
+          site: found.site,
+          source: `discord · ${found.author}`,
+          matched: found.matched,
+        });
+        if (entry && entry.kind === 'product') {
+          announce({ kind: 'discovered', name: entry.title, url: entry.url, site: entry.site, source: entry.source });
+        }
+      }
+    }
+
+    discordBackoff = limited ? Math.min(discordBackoff * 2, 8) : 1;
+    autoAddOrAnnounce();
   }
 
   function autoAddOrAnnounce() {
@@ -318,6 +428,22 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     autoAddOrAnnounce();
   }
 
+  let discordTimer = null;
+
+  function scheduleDiscord() {
+    const { settings } = state.getState();
+    const base = Math.max(5, settings.discordPollSeconds) * 1000;
+    discordTimer = setTimeout(async () => {
+      try {
+        await pollDiscord();
+      } catch {
+        // Discovery must never take the dashboard down.
+      }
+      scheduleDiscord();
+    }, base * discordBackoff);
+    discordTimer.unref?.();
+  }
+
   let redditTimer = null;
 
   function scheduleReddit() {
@@ -342,6 +468,7 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
       server.listen(port, HOST, () => {
         server.removeListener('error', onError);
         scheduleReddit();
+        scheduleDiscord();
         resolve(server.address().port);
       });
     });
@@ -360,8 +487,10 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     url,
     isLan: LAN,
     pollReddit, // exposed so tests can drive a round without waiting
+    pollDiscord,
     close: () => new Promise((resolve) => {
       clearTimeout(redditTimer);
+      clearTimeout(discordTimer);
       server.close(resolve);
     }),
   };

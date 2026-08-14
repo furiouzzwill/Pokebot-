@@ -243,6 +243,40 @@ time to surface — or never appear on page one at all. Point the tab at a
 category sorted newest-first instead of `?searchTerm=pokemon`; the watcher
 takes any Walmart or Target search, browse, or category URL.
 
+## Discord
+
+Both directions, both optional, both configured in `.env` rather than the
+dashboard — a webhook URL and a bot token are bearer credentials, and
+`config/app-state.json` gets copied and pasted around far too easily.
+
+**Out — alerts to a channel.** Set `DISCORD_WEBHOOK_URL` (Server Settings →
+Integrations → Webhooks → New Webhook). In-stock, carted, order placed,
+refused-to-submit and bot-check events post as embeds with the product link.
+Routine chatter like `watching` is deliberately excluded; mirroring it drowns
+the channel and people mute it, which defeats the point.
+
+Set `DISCORD_MENTION` to `@here`, `@everyone` or a role mention to ping — but
+only the three events that need someone *now* (in stock, carted, bot check)
+ever ping. The rest post silently.
+
+**In — read links your group posts.** Set `DISCORD_BOT_TOKEN` and
+`DISCORD_CHANNEL_IDS`. Any Walmart or Target product link posted in those
+channels becomes a watchlist candidate, credited to whoever posted it. Links
+inside embeds count too, so other stock bots in the channel feed this as well.
+
+If your group already shares finds, this is usually the fastest source you
+have — faster than the Reddit feed, and far more relevant.
+
+Setup: create a bot at discord.com/developers/applications → Bot → Reset
+Token, invite it to your server, and give it **Read Messages** and **Read
+Message History** on those channels. The Message Content privileged intent is
+*not* required — that applies to Gateway connections, and this reads over
+REST. Channel ids come from enabling Developer Mode in Discord, then
+right-clicking a channel → Copy Channel ID.
+
+The first poll on each channel takes only the latest handful of messages, so
+turning this on doesn't replay your channel's whole history as fresh finds.
+
 ### Why the search-page watcher matches on URL shape
 
 Product links are found by path pattern (`/p/…/-/A-<tcin>`, `/ip/…/<id>`),

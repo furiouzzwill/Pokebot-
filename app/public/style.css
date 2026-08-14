@@ -194,3 +194,7 @@ button:hover { opacity: .88; }
   color: var(--muted);
 }
 .kind-tag.product { color: var(--ok); border-color: currentColor; }
+.note code {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 3px;
+  padding: 0 3px; font-size: 11px;
+}

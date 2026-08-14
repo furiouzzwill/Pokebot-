@@ -39,6 +39,11 @@ const DEFAULT_SETTINGS = {
   // an auto-added URL that turns out to be the wrong item would be armed
   // against your real payment method.
   autoAddDiscoveries: false,
+
+  // --- Discord --------------------------------------------------------------
+  // Credentials live in .env, not here. These only decide whether to use them.
+  discordAlerts: true,
+  discordPollSeconds: 15,
 };
 
 /** Subreddits and keywords are lists, kept out of the numeric/boolean block. */

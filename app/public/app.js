@@ -2,11 +2,11 @@
 
 const BOOLS = [
   'armed', 'dryRun', 'autoCheckout', 'placeOrder',
-  'discoveryEnabled', 'autoAddDiscoveries',
+  'discoveryEnabled', 'autoAddDiscoveries', 'discordAlerts',
 ];
 const NUMS = [
   'maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
-  'redditIntervalMinutes',
+  'redditIntervalMinutes', 'discordPollSeconds',
 ];
 const LISTS = ['keywords', 'subreddits'];
 

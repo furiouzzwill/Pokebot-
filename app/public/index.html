@@ -114,6 +114,22 @@
       Auto-add puts a found URL straight into the watchlist, where your live
       settings apply to it. Leave it off unless you trust your keywords.
     </p>
+
+    <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+
+    <div class="ctl">
+      <label for="discordAlerts"><strong>Post to Discord</strong><span class="sub">alerts for stock, carts, orders</span></label>
+      <input type="checkbox" id="discordAlerts">
+    </div>
+    <div class="ctl num">
+      <label for="discordPollSeconds">Read Discord every (s)</label>
+      <input type="number" id="discordPollSeconds" min="5">
+    </div>
+    <p class="note" style="margin-top:8px">
+      Webhook URL and bot token go in your <code>.env</code> file, not here —
+      both are passwords, and this dashboard's settings get copied around.
+      See <code>.env.example</code>.
+    </p>
   </section>
 
   <section class="panel wide">
