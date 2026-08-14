@@ -13,6 +13,10 @@ const DASHBOARD_PORT = 8787;
 const RECONNECT_MS = 4000;
 
 let socket = null;
+// connect() awaits storage before it can open the socket, and the keepalive
+// alarm calls it every 30s. Without this the readyState guard below reads a
+// stale `socket` during that await and a second socket gets opened.
+let connecting = false;
 // itemId -> tabId for the tabs this extension opened. Tabs you opened yourself
 // are never touched.
 const managedTabs = new Map();
@@ -22,26 +26,37 @@ function bridgeLog(...args) {
 }
 
 async function connect() {
+  if (connecting) return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
     return;
   }
+  connecting = true;
 
-  const { dashboardToken } = await chrome.storage.local.get('dashboardToken');
-  const query = dashboardToken ? `?token=${encodeURIComponent(dashboardToken)}` : '';
-
+  // Every handler below closes over `ws` rather than `socket`. A reconnect
+  // reassigns `socket`, so an older connection's handlers would otherwise act
+  // on whichever socket happens to be current -- sending `hello` on a socket
+  // still CONNECTING, which throws and leaves us registered as a dashboard
+  // client that never receives the watchlist.
+  let ws;
   try {
-    socket = new WebSocket(`ws://127.0.0.1:${DASHBOARD_PORT}/ws${query}`);
+    const { dashboardToken } = await chrome.storage.local.get('dashboardToken');
+    const query = dashboardToken ? `?token=${encodeURIComponent(dashboardToken)}` : '';
+    ws = new WebSocket(`ws://127.0.0.1:${DASHBOARD_PORT}/ws${query}`);
   } catch {
+    connecting = false;
     setTimeout(connect, RECONNECT_MS);
     return;
   }
 
-  socket.addEventListener('open', () => {
+  socket = ws;
+  connecting = false;
+
+  ws.addEventListener('open', () => {
     bridgeLog('connected to dashboard');
-    socket.send(JSON.stringify({ type: 'hello', role: 'extension' }));
+    ws.send(JSON.stringify({ type: 'hello', role: 'extension' }));
   });
 
-  socket.addEventListener('message', async (event) => {
+  ws.addEventListener('message', async (event) => {
     let message;
     try {
       message = JSON.parse(event.data);
@@ -55,8 +70,11 @@ async function connect() {
     }
   });
 
-  socket.addEventListener('close', () => setTimeout(connect, RECONNECT_MS));
-  socket.addEventListener('error', () => socket?.close());
+  ws.addEventListener('close', () => {
+    if (socket === ws) socket = null;
+    setTimeout(connect, RECONNECT_MS);
+  });
+  ws.addEventListener('error', () => ws.close());
 }
 
 /** Open tabs for newly watched items, close tabs for ones no longer watched. */
