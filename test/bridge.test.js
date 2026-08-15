@@ -73,15 +73,28 @@ function loadBridge() {
     releaseStorage = resolve;
   });
 
+  const tabs = { created: [], removed: [], nextId: 1, live: new Set() };
+
   const chrome = {
     storage: {
       local: { get: () => storageGate.then(() => ({})) },
       sync: { set: async () => {} },
     },
     tabs: {
-      create: async () => ({ id: 1 }),
-      get: async () => ({ id: 1 }),
-      remove: async () => {},
+      create: async ({ url }) => {
+        const id = tabs.nextId++;
+        tabs.created.push({ id, url });
+        tabs.live.add(id);
+        return { id };
+      },
+      get: async (id) => {
+        if (!tabs.live.has(id)) throw new Error('no such tab');
+        return { id };
+      },
+      remove: async (id) => {
+        tabs.removed.push(id);
+        tabs.live.delete(id);
+      },
       onRemoved: { addListener() {} },
     },
     alarms: {
@@ -109,6 +122,7 @@ function loadBridge() {
   vm.runInContext(BRIDGE, context);
 
   return {
+    tabs,
     releaseStorage,
     fireAlarm: () => {
       for (const fn of alarmListeners) fn({ name: 'pokebot-keepalive' });
@@ -171,4 +185,52 @@ test("a stale connection's open handler never sends on the current socket", asyn
 
   assert.strictEqual(current.sent.length, 0, 'stale handler wrote to the live socket');
   assert.strictEqual(stale.sent.length, 1);
+});
+
+test('drop-window search tabs are opened, kept, and closed with the window', async () => {
+  const { tabs, releaseStorage } = loadBridge();
+  releaseStorage();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const socket = FakeSocket.instances[0];
+  socket.readyState = FakeSocket.OPEN;
+
+  const url = 'https://www.walmart.com/browse/pokemon?sort=new';
+  const sync = (searchTabs) => socket.fire('message', {
+    data: JSON.stringify({ type: 'sync', watchlist: [], searchTabs }),
+  });
+
+  // Window opens.
+  sync([url]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepStrictEqual(tabs.created.map((t) => t.url), [url]);
+
+  // A re-sync while it is still open must not stack up duplicate tabs.
+  sync([url]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(tabs.created.length, 1, 'opened the same search tab twice');
+
+  // Window closes: the dashboard sends an empty list and the tab goes away.
+  sync([]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepStrictEqual(tabs.removed, [tabs.created[0].id]);
+});
+
+test('a sync with no searchTabs key leaves watchlist tabs alone', async () => {
+  const { tabs, releaseStorage } = loadBridge();
+  releaseStorage();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const socket = FakeSocket.instances[0];
+  socket.readyState = FakeSocket.OPEN;
+  socket.fire('message', {
+    data: JSON.stringify({
+      type: 'sync',
+      watchlist: [{ id: 'a', url: 'https://www.target.com/p/x/-/A-1', name: 'x' }],
+    }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.strictEqual(tabs.created.length, 1, 'the watchlist tab should still open');
+  assert.deepStrictEqual(tabs.removed, [], 'an absent searchTabs key must close nothing');
 });

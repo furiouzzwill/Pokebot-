@@ -164,6 +164,19 @@
       <label for="autoAddDuringDrop"><strong>Auto-add during the window</strong><span class="sub">only while it's open</span></label>
       <input type="checkbox" id="autoAddDuringDrop">
     </div>
+    <div class="ctl">
+      <label for="openSearchDuringDrop"><strong>Open the search tabs itself</strong><span class="sub">and close them after</span></label>
+      <input type="checkbox" id="openSearchDuringDrop">
+    </div>
+
+    <div class="field">
+      <label for="searchUrls">Search pages to watch</label>
+      <input type="text" id="searchUrls" placeholder="https://www.walmart.com/browse/...?sort=new">
+      <p class="hint">
+        Walmart or Target search, browse or category URLs, comma separated.
+        Sort by newest. Opened when the window opens, closed when it shuts.
+      </p>
+    </div>
 
     <p class="hint" id="dropHint"></p>
 

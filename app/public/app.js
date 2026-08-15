@@ -3,7 +3,7 @@
 const BOOLS = [
   'armed', 'dryRun', 'autoCheckout', 'placeOrder',
   'discoveryEnabled', 'autoAddDiscoveries', 'discordAlerts',
-  'dropScheduleEnabled', 'autoAddDuringDrop',
+  'dropScheduleEnabled', 'autoAddDuringDrop', 'openSearchDuringDrop',
 ];
 const NUMS = [
   'maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
@@ -11,7 +11,7 @@ const NUMS = [
   'dropLeadMinutes', 'dropTrailMinutes', 'searchSeconds', 'dropSearchSeconds',
 ];
 const TEXTS = ['dropTime', 'dropTimeZone'];
-const LISTS = ['keywords', 'subreddits', 'dropDays'];
+const LISTS = ['keywords', 'subreddits', 'dropDays', 'searchUrls'];
 
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token');

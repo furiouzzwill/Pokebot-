@@ -328,3 +328,50 @@ test('auto-add during a drop does nothing while the window is shut', async () =>
   extension.ws.close();
   dashboard.ws.close();
 });
+
+test('search tabs are sent only while the window is open, and only for retailers', async () => {
+  const extension = client('extension');
+  await extension.ready;
+  const dashboard = client('dashboard');
+  await dashboard.ready;
+
+  dashboard.send({
+    type: 'setRules',
+    rules: {
+      dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+      searchUrls: [
+        'https://www.walmart.com/browse/pokemon?sort=new',
+        'https://evil.example.com/steal',   // wrong host
+        'http://www.walmart.com/browse/x',  // not https
+        'not a url at all',
+      ],
+    },
+  });
+  dashboard.send({
+    type: 'setSettings',
+    settings: {
+      dropScheduleEnabled: true,
+      dropTime: '00:00',
+      dropLeadMinutes: 0,
+      dropTrailMinutes: 24 * 60,
+      openSearchDuringDrop: true,
+    },
+  });
+
+  const open = await extension.next((m) => m.type === 'sync' && m.settings?.dropActive === true);
+  assert.deepStrictEqual(
+    open.searchTabs,
+    ['https://www.walmart.com/browse/pokemon?sort=new'],
+    'only an https retailer URL may become a tab in your logged-in browser',
+  );
+
+  // Closing the window must retract them, so the tabs get closed again.
+  dashboard.send({ type: 'setSettings', settings: { dropScheduleEnabled: false } });
+  const shut = await extension.next(
+    (m) => m.type === 'sync' && m.settings?.dropScheduleEnabled === false,
+  );
+  assert.deepStrictEqual(shut.searchTabs, []);
+
+  extension.ws.close();
+  dashboard.ws.close();
+});

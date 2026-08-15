@@ -62,6 +62,10 @@ const DEFAULT_SETTINGS = {
   // Add matching finds straight to the watchlist, but only inside the window.
   // Narrower than autoAddDiscoveries, which does it around the clock.
   autoAddDuringDrop: false,
+  // Open the search pages below as pinned tabs while the window is open, and
+  // close them when it shuts. Without this the watcher only ever sees a tab
+  // you remembered to leave open yourself.
+  openSearchDuringDrop: true,
 
   // --- Discord --------------------------------------------------------------
   // Credentials live in .env, not here. These only decide whether to use them.
@@ -76,6 +80,9 @@ const DEFAULT_RULES = {
   // Weekdays the drop schedule fires on. Walmart's Pokemon restocks are a
   // Wednesday-night fixture, hence the default.
   dropDays: ['wednesday'],
+  // Search or category pages to watch during a drop window. Sorted newest
+  // first, because relevance ranking buries a brand new SKU.
+  searchUrls: [],
 };
 
 function emptyState() {
@@ -278,7 +285,7 @@ function dismissDiscovery(key) {
 
 function setRules(patch) {
   const next = { ...state.rules };
-  for (const field of ['subreddits', 'keywords', 'dropDays']) {
+  for (const field of ['subreddits', 'keywords', 'dropDays', 'searchUrls']) {
     if (!Array.isArray(patch?.[field])) continue;
     next[field] = patch[field]
       .map((value) => String(value).trim())

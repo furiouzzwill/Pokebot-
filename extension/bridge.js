@@ -20,6 +20,9 @@ let connecting = false;
 // itemId -> tabId for the tabs this extension opened. Tabs you opened yourself
 // are never touched.
 const managedTabs = new Map();
+// url -> tabId for search tabs opened for a drop window, kept separate so
+// closing them at the end of the window can't touch a watchlist tab.
+const searchTabs = new Map();
 
 function bridgeLog(...args) {
   console.log('%c[pokebot:bridge]', 'color:#1d3557;font-weight:bold', ...args);
@@ -67,6 +70,7 @@ async function connect() {
       // Settings first: a tab must not open and act under stale settings.
       if (message.settings) await chrome.storage.sync.set(message.settings);
       await reconcileTabs(message.watchlist || []);
+      await reconcileSearchTabs(message.searchTabs || []);
     }
   });
 
@@ -109,9 +113,51 @@ async function reconcileTabs(watchlist) {
   }
 }
 
+/**
+ * Open the drop-night search tabs, and close them when the window shuts.
+ *
+ * The search watcher can only see a results page that is actually open in a
+ * tab, so relying on you to have left one there is the weakest link in the
+ * whole chain: forget it on a Wednesday afternoon and the 9pm window watches
+ * nothing at all. The dashboard sends the list while a window is open and an
+ * empty list once it closes, so these tabs exist only for the drop.
+ */
+async function reconcileSearchTabs(urls) {
+  const wanted = new Set(urls);
+
+  for (const [url, tabId] of [...searchTabs]) {
+    if (!wanted.has(url)) {
+      searchTabs.delete(url);
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+
+  for (const url of wanted) {
+    const existing = searchTabs.get(url);
+    if (existing !== undefined) {
+      try {
+        await chrome.tabs.get(existing);
+        continue;
+      } catch {
+        searchTabs.delete(url);
+      }
+    }
+    const tab = await chrome.tabs.create({ url, pinned: true, active: false });
+    searchTabs.set(url, tab.id);
+    bridgeLog('opened search tab for the drop window', url);
+  }
+}
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   for (const [itemId, id] of managedTabs) {
     if (id === tabId) managedTabs.delete(itemId);
+  }
+  for (const [url, id] of searchTabs) {
+    if (id === tabId) searchTabs.delete(url);
   }
 });
 

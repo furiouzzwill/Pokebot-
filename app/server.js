@@ -143,6 +143,32 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     return dropWindow(new Date(), scheduleFrom(settings, rules));
   }
 
+  /**
+   * Search pages the extension should have open right now.
+   *
+   * Only while a drop window is open, and only ever on a retailer host. This
+   * list becomes chrome.tabs.create() calls in a browser you are logged into,
+   * so it is not somewhere to trust whatever ended up in the settings file.
+   */
+  function searchTabsFor(drop) {
+    const { settings, rules } = state.getState();
+    if (!drop.active || !settings.openSearchDuringDrop) return [];
+
+    const allowed = new Set(['www.walmart.com', 'www.target.com']);
+    const urls = [];
+    for (const raw of rules.searchUrls || []) {
+      let parsed;
+      try {
+        parsed = new URL(String(raw).trim());
+      } catch {
+        continue;
+      }
+      if (parsed.protocol !== 'https:' || !allowed.has(parsed.hostname)) continue;
+      urls.push(parsed.toString());
+    }
+    return urls;
+  }
+
   /** Push watchlist + settings to the extension, and full state to dashboards. */
   function syncAll() {
     const snap = state.snapshot();
@@ -158,6 +184,7 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
         watchlist: snap.watchlist
           .filter((item) => item.enabled)
           .map(({ id, url, name, site }) => ({ id, url, name, site })),
+        searchTabs: searchTabsFor(drop),
       },
       'extension',
     );

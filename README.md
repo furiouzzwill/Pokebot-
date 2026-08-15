@@ -252,6 +252,15 @@ Outside it, nothing changes.
 | **Re-query search every** | The all-week interval. Floored at 5s. |
 | **…and in the window** | The interval used while the window is open. |
 | **Auto-add during the window** | Auto-adds matching finds, but only while it's open. |
+| **Open the search tabs itself** | Opens the pages below when the window opens, closes them when it shuts. |
+| **Search pages to watch** | Walmart/Target search, browse or category URLs. |
+
+With **Open the search tabs itself** on, you don't have to remember to leave a
+tab open on a Wednesday afternoon — the extension opens the pages when the
+window opens and closes them again afterwards. Only `https` URLs on
+`www.walmart.com` or `www.target.com` are ever opened; the list becomes
+`chrome.tabs.create` calls in a browser you are logged into, so it isn't
+somewhere to trust whatever ended up in the settings file.
 
 The timezone is a zone name rather than an offset on purpose. `EST` is −5 all
 year; `America/New_York` is −5 in January and −4 in July. Storing the offset
