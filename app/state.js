@@ -46,6 +46,23 @@ const DEFAULT_SETTINGS = {
   // against your real payment method.
   autoAddDiscoveries: false,
 
+  // --- Scheduled drops ------------------------------------------------------
+  // A retailer restock happens at a fixed local time and the product page
+  // often does not exist until it does. Inside the window the search watcher
+  // re-queries far harder than it would the rest of the week.
+  dropScheduleEnabled: false,
+  dropTime: '21:00',
+  // An IANA zone, not an offset: see src/discovery/schedule.js.
+  dropTimeZone: 'America/New_York',
+  dropLeadMinutes: 10,
+  dropTrailMinutes: 20,
+  // Seconds between search-page re-queries, outside the window and inside it.
+  searchSeconds: 90,
+  dropSearchSeconds: 10,
+  // Add matching finds straight to the watchlist, but only inside the window.
+  // Narrower than autoAddDiscoveries, which does it around the clock.
+  autoAddDuringDrop: false,
+
   // --- Discord --------------------------------------------------------------
   // Credentials live in .env, not here. These only decide whether to use them.
   discordAlerts: true,
@@ -56,6 +73,9 @@ const DEFAULT_SETTINGS = {
 const DEFAULT_RULES = {
   subreddits: ['pkmntcgdeals', 'PokeInvesting'],
   keywords: ['pokemon', 'pokémon', 'elite trainer', 'booster bundle', 'etb'],
+  // Weekdays the drop schedule fires on. Walmart's Pokemon restocks are a
+  // Wednesday-night fixture, hence the default.
+  dropDays: ['wednesday'],
 };
 
 function emptyState() {
@@ -159,7 +179,19 @@ function setSettings(patch) {
   const next = { ...state.settings };
   for (const [key, value] of Object.entries(patch || {})) {
     if (!(key in DEFAULT_SETTINGS)) continue;
-    next[key] = typeof DEFAULT_SETTINGS[key] === 'boolean' ? Boolean(value) : Number(value);
+
+    // Coerce to the shape of the default. Everything used to go through
+    // Number(), which turned a wall-clock time or a timezone name into NaN --
+    // and NaN persists as null, so one bad write poisoned the setting for good.
+    const shape = typeof DEFAULT_SETTINGS[key];
+    if (shape === 'boolean') {
+      next[key] = Boolean(value);
+    } else if (shape === 'number') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) next[key] = parsed;
+    } else {
+      next[key] = String(value);
+    }
   }
   // placeOrder can never fire without autoCheckout; keep stored state honest
   // rather than relying on the UI to enforce it.
@@ -246,7 +278,7 @@ function dismissDiscovery(key) {
 
 function setRules(patch) {
   const next = { ...state.rules };
-  for (const field of ['subreddits', 'keywords']) {
+  for (const field of ['subreddits', 'keywords', 'dropDays']) {
     if (!Array.isArray(patch?.[field])) continue;
     next[field] = patch[field]
       .map((value) => String(value).trim())

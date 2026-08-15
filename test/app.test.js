@@ -214,3 +214,117 @@ test('refuses to serve files outside the public directory', async () => {
   const res = await fetch(`http://127.0.0.1:${port}/../state.js`);
   assert.ok(res.status === 403 || res.status === 404, `got ${res.status}`);
 });
+
+// --- Scheduled drop windows --------------------------------------------------
+
+test('the extension is told whether a drop window is open', async () => {
+  const extension = client('extension');
+  await extension.ready;
+
+  // A schedule that is always open: every weekday, and a trail long enough to
+  // cover the whole day whatever time the suite happens to run.
+  const dashboard = client('dashboard');
+  await dashboard.ready;
+  dashboard.send({
+    type: 'setRules',
+    rules: { dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] },
+  });
+  dashboard.send({
+    type: 'setSettings',
+    settings: {
+      dropScheduleEnabled: true,
+      dropTime: '00:00',
+      dropLeadMinutes: 0,
+      dropTrailMinutes: 24 * 60,
+      dropSearchSeconds: 10,
+    },
+  });
+
+  const sync = await extension.next(
+    (m) => m.type === 'sync' && m.settings?.dropActive === true,
+  );
+  assert.strictEqual(sync.settings.dropSearchSeconds, 10);
+
+  extension.ws.close();
+  dashboard.ws.close();
+});
+
+test('a schedule that is not due leaves the window shut', async () => {
+  const extension = client('extension');
+  await extension.ready;
+  const dashboard = client('dashboard');
+  await dashboard.ready;
+
+  // A one-minute window at a fixed time cannot be open for more than a minute
+  // a day, so treat an unlucky collision as the flake it would be.
+  dashboard.send({ type: 'setRules', rules: { dropDays: ['wednesday'] } });
+  dashboard.send({
+    type: 'setSettings',
+    settings: {
+      dropScheduleEnabled: true,
+      dropTime: '03:17',
+      dropTimeZone: 'America/New_York',
+      dropLeadMinutes: 0,
+      dropTrailMinutes: 0,
+    },
+  });
+
+  // Match on the new schedule landing, not merely on any sync: the first one
+  // arrives on hello and still carries whatever the previous test configured.
+  const sync = await extension.next(
+    (m) => m.type === 'sync' && m.settings?.dropTime === '03:17',
+  );
+  const nowET = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date());
+  if (!/Wednesday 03:17/.test(nowET)) {
+    assert.strictEqual(sync.settings.dropActive, false);
+  }
+
+  extension.ws.close();
+  dashboard.ws.close();
+});
+
+test('auto-add during a drop does nothing while the window is shut', async () => {
+  const dashboard = client('dashboard');
+  await dashboard.ready;
+
+  dashboard.send({
+    type: 'setSettings',
+    settings: {
+      dropScheduleEnabled: false,
+      autoAddDuringDrop: true,
+      autoAddDiscoveries: false,
+    },
+  });
+  await dashboard.next((m) => m.type === 'state' && m.settings.autoAddDuringDrop === true);
+
+  const before = (await dashboard.next((m) => m.type === 'state')).watchlist.length;
+
+  // Ingest a find the way the search watcher would.
+  const extension = client('extension');
+  await extension.ready;
+  extension.send({
+    type: 'event',
+    kind: 'discovered',
+    site: 'walmart',
+    url: 'https://www.walmart.com/search?q=pokemon',
+    products: [{
+      url: 'https://www.walmart.com/ip/pokemon-etb/999888777',
+      id: '999888777',
+      site: 'walmart',
+      title: 'Pokemon Elite Trainer Box',
+    }],
+  });
+
+  const state = await dashboard.next(
+    (m) => m.type === 'state' && (m.discoveries || []).some((d) => d.url?.includes('999888777')),
+  );
+  assert.strictEqual(
+    state.watchlist.length, before,
+    'a closed window must not auto-add, even with autoAddDuringDrop on',
+  );
+
+  extension.ws.close();
+  dashboard.ws.close();
+});

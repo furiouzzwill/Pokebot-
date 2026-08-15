@@ -58,7 +58,23 @@ const DEFAULTS = {
   // Alert loudly on stock, on a challenge page, and on cart success/failure.
   sound: true,
   notifications: true,
+
+  // --- Search-page watcher --------------------------------------------------
+  // Seconds between re-queries of a search or category page. A results page is
+  // a snapshot and never updates itself, so this is the only thing that lets
+  // the watcher see a listing that appeared after the tab loaded.
+  searchSeconds: 90,
+
+  // The interval used instead while a scheduled drop window is open. The
+  // dashboard owns the schedule and the timezone arithmetic; the extension is
+  // told nothing more than whether a window is currently open.
+  dropSearchSeconds: 10,
+  dropActive: false,
 };
+
+// Below this the re-query stops looking like a person with a tab open. A bot
+// check during the one minute that matters costs the whole drop.
+const MIN_SEARCH_SECONDS = 5;
 
 async function loadSettings() {
   if (typeof chrome === 'undefined' || !chrome.storage) return { ...DEFAULTS };
@@ -112,7 +128,7 @@ async function resetLedger() {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    DEFAULTS, loadSettings, saveSettings,
+    DEFAULTS, MIN_SEARCH_SECONDS, loadSettings, saveSettings,
     readLedger, canPlaceOrder, recordOrder, resetLedger,
   };
 }

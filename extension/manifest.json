@@ -39,7 +39,7 @@
         "https://www.target.com/s*",
         "https://www.target.com/c/*"
       ],
-      "js": ["search.js"],
+      "js": ["config.js", "search.js"],
       "run_at": "document_idle"
     }
   ],

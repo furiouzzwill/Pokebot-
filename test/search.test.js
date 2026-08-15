@@ -21,6 +21,7 @@ const SKIP = chromium === null;
 const EXT = path.join(__dirname, '..', 'extension');
 const FIXTURES = path.join(__dirname, 'fixtures');
 const searchJs = SKIP ? '' : fs.readFileSync(path.join(EXT, 'search.js'), 'utf8');
+const configJs = SKIP ? '' : fs.readFileSync(path.join(EXT, 'config.js'), 'utf8');
 
 function launchOptions() {
   const bundled = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers';
@@ -44,9 +45,18 @@ async function drive({ html, url, mutate }) {
     );
     await page.addInitScript(`
       window.__msgs = [];
-      window.chrome = { runtime: { sendMessage: (m) => window.__msgs.push(m) } };
+      window.chrome = {
+        runtime: { sendMessage: (m) => window.__msgs.push(m) },
+        storage: {
+          sync: { get: async (defaults) => ({ ...defaults }) },
+          onChanged: { addListener: () => {} },
+        },
+      };
     `);
     await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    // search.js reads its re-query interval from settings, so config.js has to
+    // be in scope the way the manifest puts it there.
+    await page.addScriptTag({ content: configJs });
     await page.addScriptTag({ content: searchJs });
     await page.waitForTimeout(400);
 

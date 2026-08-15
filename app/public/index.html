@@ -11,6 +11,7 @@
 <header>
   <h1>Pokebot</h1>
   <div class="pills">
+    <span id="dropPill" class="pill" style="display:none">scheduled</span>
     <span id="extPill" class="pill off">extension offline</span>
     <span id="modePill" class="pill">alert only</span>
   </div>
@@ -113,6 +114,65 @@
     <p class="note">
       Auto-add puts a found URL straight into the watchlist, where your live
       settings apply to it. Leave it off unless you trust your keywords.
+    </p>
+
+    <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+
+    <div class="ctl">
+      <label for="dropScheduleEnabled"><strong>Scheduled drop window</strong><span class="sub">re-query hard at a set time</span></label>
+      <input type="checkbox" id="dropScheduleEnabled">
+    </div>
+
+    <div class="field">
+      <label for="dropDays">Drop days</label>
+      <input type="text" id="dropDays" placeholder="wednesday">
+      <p class="hint">Weekday names, comma separated.</p>
+    </div>
+
+    <div class="ctl num">
+      <label for="dropTime">Drop time (24h)</label>
+      <input type="text" id="dropTime" placeholder="21:00" size="5">
+    </div>
+
+    <div class="field">
+      <label for="dropTimeZone">Timezone</label>
+      <input type="text" id="dropTimeZone" placeholder="America/New_York">
+      <p class="hint">
+        An IANA name, not <code>EST</code>. <code>America/New_York</code> is
+        Eastern all year and moves itself for daylight saving.
+      </p>
+    </div>
+
+    <div class="ctl num">
+      <label for="dropLeadMinutes">Open window early (min)</label>
+      <input type="number" id="dropLeadMinutes" min="0">
+    </div>
+    <div class="ctl num">
+      <label for="dropTrailMinutes">Keep it open after (min)</label>
+      <input type="number" id="dropTrailMinutes" min="0">
+    </div>
+    <div class="ctl num">
+      <label for="searchSeconds">Re-query search every (s)</label>
+      <input type="number" id="searchSeconds" min="5">
+    </div>
+    <div class="ctl num">
+      <label for="dropSearchSeconds">…and in the window (s)</label>
+      <input type="number" id="dropSearchSeconds" min="5">
+    </div>
+
+    <div class="ctl">
+      <label for="autoAddDuringDrop"><strong>Auto-add during the window</strong><span class="sub">only while it's open</span></label>
+      <input type="checkbox" id="autoAddDuringDrop">
+    </div>
+
+    <p class="hint" id="dropHint"></p>
+
+    <p class="note">
+      A drop page usually doesn't exist until minutes beforehand, so keep a
+      Walmart or Target category tab open — <strong>sorted newest first</strong>,
+      not a plain search. Relevance ranking buries a brand new SKU.
+      Below 5s the re-query stops looking like someone with a tab open, and a
+      bot check during the one minute that matters costs you the drop.
     </p>
 
     <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">

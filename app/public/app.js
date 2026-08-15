@@ -3,12 +3,15 @@
 const BOOLS = [
   'armed', 'dryRun', 'autoCheckout', 'placeOrder',
   'discoveryEnabled', 'autoAddDiscoveries', 'discordAlerts',
+  'dropScheduleEnabled', 'autoAddDuringDrop',
 ];
 const NUMS = [
   'maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
   'redditIntervalMinutes', 'discordPollSeconds',
+  'dropLeadMinutes', 'dropTrailMinutes', 'searchSeconds', 'dropSearchSeconds',
 ];
-const LISTS = ['keywords', 'subreddits'];
+const TEXTS = ['dropTime', 'dropTimeZone'];
+const LISTS = ['keywords', 'subreddits', 'dropDays'];
 
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token');
@@ -32,6 +35,7 @@ function connect() {
       renderRules(message.rules);
       renderWatchlist(message.watchlist);
       renderDiscoveries(message.discoveries || []);
+      renderDrop(message.drop);
       renderLog(message.history);
     } else if (message.type === 'event') {
       appendLog(message.entry);
@@ -63,6 +67,7 @@ function renderSettings(next) {
   suppressSend = true;
   for (const key of BOOLS) $(key).checked = Boolean(next[key]);
   for (const key of NUMS) $(key).value = next[key];
+  for (const key of TEXTS) $(key).value = next[key] ?? '';
   suppressSend = false;
 
   // placeOrder can't fire without autoCheckout, so don't let it look armed.
@@ -151,6 +156,41 @@ function renderWatchlist(items) {
   $('emptyHint').style.display = items.length ? 'none' : '';
   const active = items.filter((i) => i.enabled).length;
   $('countLabel').textContent = items.length ? `${active} of ${items.length} active` : '';
+}
+
+/** Countdown to the next scheduled drop, or the fact that one is live now. */
+function renderDrop(drop) {
+  const pill = $('dropPill');
+  const hint = $('dropHint');
+  if (!pill || !hint) return;
+
+  if (!drop || drop.minutesUntilNext === null) {
+    pill.style.display = 'none';
+    hint.textContent = settings?.dropScheduleEnabled
+      ? 'Set a day and a time to schedule a drop window.'
+      : 'Off — search tabs re-query at the normal interval all week.';
+    return;
+  }
+
+  pill.style.display = '';
+  if (drop.active) {
+    pill.textContent = 'DROP WINDOW OPEN';
+    pill.className = 'pill live';
+    hint.textContent = `Search tabs re-querying about every ${settings?.dropSearchSeconds ?? 10}s.`;
+    return;
+  }
+
+  pill.textContent = 'scheduled';
+  pill.className = 'pill';
+  const minutes = drop.minutesUntilNext;
+  const days = Math.floor(minutes / (60 * 24));
+  const hours = Math.floor((minutes % (60 * 24)) / 60);
+  const mins = minutes % 60;
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (days || hours) parts.push(`${hours}h`);
+  parts.push(`${mins}m`);
+  hint.textContent = `Next window opens in ${parts.join(' ')} (${settings?.dropLeadMinutes ?? 10} min before the drop).`;
 }
 
 function renderRules(rules) {
@@ -266,10 +306,14 @@ function pushSettings() {
     const value = Number.parseFloat($(key).value);
     if (Number.isFinite(value) && value >= 0) patch[key] = value;
   }
+  for (const key of TEXTS) {
+    const value = $(key).value.trim();
+    if (value !== '') patch[key] = value;
+  }
   send({ type: 'setSettings', settings: patch });
 }
 
-for (const key of [...BOOLS, ...NUMS]) {
+for (const key of [...BOOLS, ...NUMS, ...TEXTS]) {
   $(key).addEventListener('change', pushSettings);
 }
 

@@ -22,6 +22,7 @@ const { WebSocketServer } = require('ws');
 
 const state = require('./state');
 const { fetchSubreddit, matchKeywords } = require('../src/discovery/reddit');
+const { dropWindow, scheduleFrom } = require('../src/discovery/schedule');
 const discordIn = require('../src/discovery/discord');
 const { postAlert, DEFAULT_EVENTS } = require('../src/discord');
 
@@ -130,20 +131,60 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     return false;
   }
 
+  /**
+   * Whether a scheduled drop window is open right now.
+   *
+   * Computed here rather than in the extension so the timezone and DST
+   * arithmetic lives in one testable place, and the content scripts only ever
+   * see a boolean.
+   */
+  function dropState() {
+    const { settings, rules } = state.getState();
+    return dropWindow(new Date(), scheduleFrom(settings, rules));
+  }
+
   /** Push watchlist + settings to the extension, and full state to dashboards. */
   function syncAll() {
     const snap = state.snapshot();
-    broadcast({ type: 'state', ...snap }, 'dashboard');
+    const drop = dropState();
+
+    broadcast({ type: 'state', ...snap, drop }, 'dashboard');
     broadcast(
       {
         type: 'sync',
-        settings: snap.settings,
+        // dropActive rides along with settings so the search watcher picks it
+        // up through the same storage.onChanged path as everything else.
+        settings: { ...snap.settings, dropActive: drop.active },
         watchlist: snap.watchlist
           .filter((item) => item.enabled)
           .map(({ id, url, name, site }) => ({ id, url, name, site })),
       },
       'extension',
     );
+  }
+
+  /**
+   * The window opens and closes on wall-clock time, with nothing else
+   * necessarily happening at that moment, so it needs its own tick. Only a
+   * change is broadcast -- re-syncing every 15s would restart the extension's
+   * tabs for no reason.
+   */
+  let lastDropActive = null;
+  function watchDropWindow() {
+    const { active } = dropState();
+    if (active !== lastDropActive) {
+      const first = lastDropActive === null;
+      lastDropActive = active;
+      if (!first) {
+        state.recordEvent({
+          kind: active ? 'drop-window-open' : 'drop-window-closed',
+          detail: active
+            ? 'Drop window open -- search tabs re-querying hard.'
+            : 'Drop window closed -- back to the normal interval.',
+        });
+      }
+      syncAll();
+    }
   }
 
   const HANDLERS = {
@@ -335,7 +376,13 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
 
   function autoAddOrAnnounce() {
     const { settings } = state.getState();
-    if (settings.autoAddDiscoveries) {
+    // Inside a drop window autoAddDuringDrop stands in for the always-on
+    // setting: the whole point of the window is that there is no time to press
+    // Watch. Everything downstream is unchanged, so an auto-added item still
+    // meets the price cap, the per-order limits and the daily order ledger.
+    const autoAdd =
+      settings.autoAddDiscoveries || (settings.autoAddDuringDrop && dropState().active);
+    if (autoAdd) {
       for (const found of [...state.getState().discoveries]) {
         if (found.dismissed || found.kind !== 'product' || !found.url) continue;
         try {
@@ -461,6 +508,8 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     redditTimer.unref?.();
   }
 
+  let dropTimer = null;
+
   function listen() {
     return new Promise((resolve, reject) => {
       const onError = (err) => reject(err);
@@ -469,6 +518,11 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
         server.removeListener('error', onError);
         scheduleReddit();
         scheduleDiscord();
+        // 15s is fine granularity for a window measured in minutes, and the
+        // tick does nothing at all unless the window actually changed.
+        watchDropWindow();
+        dropTimer = setInterval(watchDropWindow, 15000);
+        dropTimer.unref?.();
         resolve(server.address().port);
       });
     });
@@ -488,6 +542,8 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     isLan: LAN,
     pollReddit, // exposed so tests can drive a round without waiting
     pollDiscord,
+    dropState,
+    watchDropWindow,
     close: () => new Promise((resolve) => {
       clearTimeout(redditTimer);
       clearTimeout(discordTimer);

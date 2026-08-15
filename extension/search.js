@@ -32,9 +32,13 @@ const PRODUCT_PATTERNS = {
  * re-queried to see a product that appeared after load. Without this the whole
  * watcher is useless for its actual job -- you'd load a search in the evening
  * and its DOM would still show the evening's results when the drop lands.
+ *
+ * The interval comes from settings, because the right answer differs by two
+ * orders of magnitude: idling on a Tuesday, 90 seconds is plenty and anything
+ * faster is a conspicuous traffic pattern for no gain. At 9pm on drop night,
+ * 90 seconds is the difference between carting and reading about it.
  */
-const RELOAD_MS = 90 * 1000;
-const RELOAD_JITTER_MS = 20 * 1000;
+const JITTER_FRACTION = 0.2;
 
 // Reported ids survive the reload in sessionStorage, so a refresh doesn't
 // re-announce the whole page as new. Cleared when the tab closes.
@@ -59,11 +63,20 @@ function saveSeen(seen) {
 
 const state = {
   seen: loadSeen(),
+  settings: null,
   timer: null,
   reloadTimer: null,
   observer: null,
   reported: 0,
 };
+
+/** Seconds between re-queries, given whether a drop window is open. */
+function reloadSeconds(settings) {
+  const chosen = settings.dropActive ? settings.dropSearchSeconds : settings.searchSeconds;
+  const seconds = Number(chosen);
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULTS.searchSeconds;
+  return Math.max(MIN_SEARCH_SECONDS, seconds);
+}
 
 function log(...args) {
   console.log('%c[pokebot:search]', 'color:#1d3557;font-weight:bold', ...args);
@@ -108,6 +121,17 @@ function scrape() {
 
     found.push({ url: clean, id, site: SITE, title: title.slice(0, 140) });
   }
+
+  // Newest first. Both retailers issue ids that climb over time, so the
+  // highest id on the page is the most recently listed product -- which on a
+  // drop night is exactly the one worth reporting before the rest. DOM order
+  // is relevance order, which buries a brand new SKU.
+  found.sort((a, b) => {
+    const left = BigInt(a.id);
+    const right = BigInt(b.id);
+    if (left === right) return 0;
+    return left > right ? -1 : 1;
+  });
 
   return found;
 }
@@ -159,24 +183,56 @@ function stop() {
 }
 
 function scheduleReload() {
+  clearTimeout(state.reloadTimer);
+
+  const base = reloadSeconds(state.settings) * 1000;
   // Jittered so several open search tabs don't re-query in lockstep, which is
   // both wasteful and a conspicuous traffic pattern.
-  const delay = RELOAD_MS + Math.floor(Math.random() * RELOAD_JITTER_MS * 2) - RELOAD_JITTER_MS;
+  const spread = base * JITTER_FRACTION;
+  const delay = base + Math.floor(Math.random() * spread * 2) - spread;
+
   state.reloadTimer = setTimeout(() => {
     // Reloading into a bot check would just re-trigger it.
     if (!isChallenge()) location.reload();
-  }, Math.max(30000, delay));
+  }, Math.max(MIN_SEARCH_SECONDS * 1000, delay));
 }
 
-function start() {
+/**
+ * Re-read settings without a reload, so a window opening at 9pm speeds up a
+ * tab that has been sitting there since the afternoon. Reloading the tab to
+ * pick up the new interval would be the one thing guaranteed to make it miss
+ * the first seconds of the drop.
+ */
+async function applySettings() {
+  const previous = state.settings;
+  state.settings = await loadSettings();
+  if (!previous) return;
+
+  if (reloadSeconds(state.settings) !== reloadSeconds(previous)) {
+    log(
+      `re-query interval now ~${reloadSeconds(state.settings)}s`,
+      state.settings.dropActive ? '(drop window open)' : '',
+    );
+    scheduleReload();
+  }
+}
+
+async function start() {
+  state.settings = await loadSettings();
+
   // Results arrive after hydration and again on infinite scroll, so watch the
   // DOM rather than reading once on load.
   state.observer = new MutationObserver(() => tick());
   state.observer.observe(document.body, { childList: true, subtree: true });
   state.timer = setInterval(tick, 3000);
+
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area === 'sync') applySettings();
+  });
+
   scheduleReload();
   tick();
-  log(`watching ${SITE} results; re-querying about every ${Math.round(RELOAD_MS / 1000)}s`);
+  log(`watching ${SITE} results; re-querying about every ${reloadSeconds(state.settings)}s`);
 }
 
 start();

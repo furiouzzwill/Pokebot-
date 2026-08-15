@@ -233,6 +233,43 @@ Finds land in a review queue and are **not watched until you press Watch**.
 specific reason: an auto-added URL inherits your live settings, so a bad
 keyword match could be armed against your real payment method.
 
+### Scheduled drops
+
+Restocks happen on a clock. Walmart's Pokémon drops land at 9pm Eastern on
+Wednesdays, and the product page frequently doesn't exist until it happens —
+so there is nothing to watch beforehand and no point polling hard all week.
+
+Set a **drop window** in Discovery settings: the days, the time, and a lead and
+trail around it. Inside the window the search watcher re-queries every
+`dropSearchSeconds` (default 10) instead of `searchSeconds` (default 90).
+Outside it, nothing changes.
+
+| Setting | What it does |
+|---|---|
+| **Drop days / time** | When the window opens. 24-hour clock. |
+| **Timezone** | An IANA name like `America/New_York`, never `EST`. |
+| **Open early / keep open after** | Minutes of lead and trail around the drop. |
+| **Re-query search every** | The all-week interval. Floored at 5s. |
+| **…and in the window** | The interval used while the window is open. |
+| **Auto-add during the window** | Auto-adds matching finds, but only while it's open. |
+
+The timezone is a zone name rather than an offset on purpose. `EST` is −5 all
+year; `America/New_York` is −5 in January and −4 in July. Storing the offset
+would leave the watcher firing an hour off for two thirds of the year — and it
+would do it silently, on the one night it needed to be right. There's a test
+pinning the same schedule firing correctly in August and in November.
+
+The header shows a countdown to the next window, and turns red while one is
+open. The window is computed on the dashboard, so the timezone arithmetic
+lives in one place and the extension is told nothing but a boolean.
+
+**`Auto-add during the window` is narrower than `Add finds automatically`** —
+it applies only while the window is open, instead of around the clock. It is
+still auto-add: a matching find goes straight onto the watchlist and inherits
+your live settings, so if you are armed and out of dry run it can cart without
+you. Max item price, max items per order and max orders per day are what stand
+between a bad keyword match and a bad purchase. Set them deliberately.
+
 ### Making the search tab actually useful
 
 Two things matter more than they look:

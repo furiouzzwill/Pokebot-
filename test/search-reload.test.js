@@ -21,9 +21,37 @@ try {
 }
 
 const SKIP = chromium === null;
-const searchJs = SKIP
-  ? ''
-  : fs.readFileSync(path.join(__dirname, '..', 'extension', 'search.js'), 'utf8');
+const EXT = path.join(__dirname, '..', 'extension');
+const searchJs = SKIP ? '' : fs.readFileSync(path.join(EXT, 'search.js'), 'utf8');
+const configJs = SKIP ? '' : fs.readFileSync(path.join(EXT, 'config.js'), 'utf8');
+
+/**
+ * config.js with the re-query floor lowered, so a test doesn't sit through the
+ * five-second minimum a real tab is held to. The floor itself is asserted
+ * separately rather than being quietly assumed away here.
+ */
+function configWithTinyFloor() {
+  return configJs.replace(/const MIN_SEARCH_SECONDS = [^;]+;/, 'const MIN_SEARCH_SECONDS = 0.4;');
+}
+
+/** A chrome stub whose settings can be swapped mid-test, as the dashboard does. */
+function chromeStub(overrides, { report = false } = {}) {
+  return `
+    window.__settings = { ...${JSON.stringify(overrides)} };
+    window.__storageListeners = [];
+    window.chrome = {
+      runtime: { sendMessage: (m) => ${report ? 'window.__pokebotReport(m)' : '(window.__msgs = window.__msgs || []).push(m)'} },
+      storage: {
+        sync: { get: async (defaults) => ({ ...defaults, ...window.__settings }) },
+        onChanged: { addListener: (fn) => window.__storageListeners.push(fn) },
+      },
+    };
+    window.__changeSettings = (patch) => {
+      Object.assign(window.__settings, patch);
+      for (const fn of window.__storageListeners) fn({}, 'sync');
+    };
+  `;
+}
 
 function launchOptions() {
   const bundled = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers';
@@ -65,16 +93,14 @@ test('re-queries the page rather than trusting a stale snapshot', { skip: SKIP }
     await tab.exposeFunction('__pokebotReport', (m) => { messages.push(m); });
 
     // addInitScript re-runs on every navigation, the way a content script
-    // registered at document_idle does. Shrink the reload delay so the test
-    // doesn't wait 90 seconds for it.
-    const fast = searchJs
-      .replace(/const RELOAD_MS = [^;]+;/, 'const RELOAD_MS = 1200;')
-      .replace(/const RELOAD_JITTER_MS = [^;]+;/, 'const RELOAD_JITTER_MS = 0;')
-      .replace(/Math\.max\(30000, delay\)/, 'delay');
-
+    // registered at document_idle does. The interval now comes from settings,
+    // so the test asks for a fast one rather than rewriting the source.
     await tab.addInitScript(`
-      window.chrome = { runtime: { sendMessage: (m) => window.__pokebotReport(m) } };
-      window.addEventListener('DOMContentLoaded', () => { ${fast} });
+      ${chromeStub({ searchSeconds: 1.2, dropActive: false }, { report: true })}
+      window.addEventListener('DOMContentLoaded', () => {
+        ${configWithTinyFloor()}
+        ${searchJs}
+      });
     `);
 
     await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -101,23 +127,119 @@ test('a refresh does not re-announce products already reported', { skip: SKIP },
         ? route.fulfill({ status: 200, contentType: 'text/html', body: page() })
         : route.abort(),
     );
-    await tab.addInitScript(`
-      window.chrome = { runtime: { sendMessage: () => {} } };
-    `);
+    await tab.addInitScript(chromeStub({ searchSeconds: 90, dropActive: false }));
     await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.addScriptTag({ content: configJs });
     await tab.addScriptTag({ content: searchJs });
     await tab.waitForTimeout(400);
 
     // Reload by hand: sessionStorage must carry the seen set across it.
     await tab.reload({ waitUntil: 'domcontentloaded' });
-    await tab.addInitScript(`window.__msgs = [];`);
-    await tab.evaluate(() => { window.__msgs = []; window.chrome = { runtime: { sendMessage: (m) => window.__msgs.push(m) } }; });
+    await tab.evaluate(() => { window.__msgs = []; });
+    await tab.addScriptTag({ content: configJs });
     await tab.addScriptTag({ content: searchJs });
     await tab.waitForTimeout(500);
 
     const msgs = await tab.evaluate(() => window.__msgs || []);
     const ids = msgs.filter((m) => m.kind === 'discovered').flatMap((m) => m.products.map((p) => p.id));
     assert.ok(!ids.includes('93954435'), 'already-reported product must not be re-announced after reload');
+  } finally {
+    await browser.close();
+  }
+});
+
+// --- Scheduled drop windows --------------------------------------------------
+
+test('an open drop window speeds the re-query up, live', { skip: SKIP }, async () => {
+  const browser = await chromium.launch(launchOptions());
+  try {
+    const tab = await browser.newPage();
+    const loadTimes = [];
+
+    await tab.route('**/*', (route) => {
+      if (!route.request().url().startsWith('https://www.target.com/s')) return route.abort();
+      loadTimes.push(Date.now());
+      return route.fulfill({ status: 200, contentType: 'text/html', body: page() });
+    });
+
+    // Idle at a pace no test would wait for; the window is what makes it move.
+    await tab.addInitScript(`
+      ${chromeStub({ searchSeconds: 3600, dropSearchSeconds: 0.6, dropActive: false })}
+      window.addEventListener('DOMContentLoaded', () => {
+        ${configWithTinyFloor()}
+        ${searchJs}
+      });
+    `);
+
+    await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.waitForTimeout(800);
+    assert.strictEqual(loadTimes.length, 1, 'must not re-query on the idle interval yet');
+
+    // 9pm arrives: the server flips dropActive and the tab is told over storage.
+    await tab.evaluate(() => window.__changeSettings({ dropActive: true }));
+    await tab.waitForTimeout(2000);
+
+    assert.ok(
+      loadTimes.length >= 2,
+      `the open window must re-query without a reload; loaded ${loadTimes.length} time(s)`,
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the re-query interval is floored, however low it is set', { skip: SKIP }, async () => {
+  const browser = await chromium.launch(launchOptions());
+  try {
+    const tab = await browser.newPage();
+    await tab.route('**/*', (route) =>
+      route.request().url().startsWith('https://www.target.com/s')
+        ? route.fulfill({ status: 200, contentType: 'text/html', body: page() })
+        : route.abort(),
+    );
+
+    // The real config.js this time: the floor is the thing under test.
+    await tab.addInitScript(chromeStub({ dropSearchSeconds: 0, dropActive: true }));
+    await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.addScriptTag({ content: configJs });
+    await tab.addScriptTag({ content: searchJs });
+
+    const seconds = await tab.evaluate(() => reloadSeconds(state.settings));
+    assert.ok(seconds >= 5, `a zero interval must be floored, got ${seconds}`);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('newest listings are reported before the rest of the page', { skip: SKIP }, async () => {
+  const browser = await chromium.launch(launchOptions());
+  try {
+    const tab = await browser.newPage();
+    // DOM order puts the established best-seller first, as relevance ranking
+    // does. The newest SKU is the one worth reporting first on a drop night.
+    const results = `<!doctype html><html><head><title>pokemon : Target</title></head><body>
+      <div id="root">
+        <a href="/p/old-best-seller/-/A-10000001">Pokemon best seller</a>
+        <a href="/p/brand-new-drop/-/A-99999999">Pokemon brand new drop</a>
+        <a href="/p/middling/-/A-50000000">Pokemon middling</a>
+      </div></body></html>`;
+
+    await tab.route('**/*', (route) =>
+      route.request().url().startsWith('https://www.target.com/s')
+        ? route.fulfill({ status: 200, contentType: 'text/html', body: results })
+        : route.abort(),
+    );
+    await tab.addInitScript(chromeStub({ searchSeconds: 3600, dropActive: false }));
+    await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.addScriptTag({ content: configJs });
+    await tab.addScriptTag({ content: searchJs });
+    await tab.waitForTimeout(400);
+
+    const msgs = await tab.evaluate(() => window.__msgs || []);
+    const ids = msgs
+      .filter((m) => m.kind === 'discovered')
+      .flatMap((m) => m.products.map((p) => p.id));
+    assert.deepStrictEqual(ids, ['99999999', '50000000', '10000001']);
   } finally {
     await browser.close();
   }
