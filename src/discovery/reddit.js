@@ -70,6 +70,29 @@ function matchKeywords(text, keywords) {
 }
 
 /**
+ * The first exclusion the text trips, or null.
+ *
+ * A drop's set name isn't knowable in advance, so the keyword list has to
+ * match on product *type* -- "booster bundle", "elite trainer box" -- which is
+ * durable across sets. That is deliberately loose, and loose matching on a
+ * retailer search page drags in socks, plushies and single cards alongside the
+ * sealed product. Excluding beats tightening here: a narrower positive list
+ * would miss the very drop it exists to catch.
+ *
+ * An exclusion always wins over a match, because the cost is asymmetric.
+ * Missing a drop is a disappointment; auto-buying a $9 pair of Pikachu socks
+ * against a live payment method is a different kind of problem.
+ */
+function firstExclusion(text, excludeKeywords = []) {
+  const haystack = String(text || '').toLowerCase();
+  for (const word of excludeKeywords) {
+    const needle = String(word).trim().toLowerCase();
+    if (needle !== '' && haystack.includes(needle)) return needle;
+  }
+  return null;
+}
+
+/**
  * Parse a subreddit Atom feed into candidate announcements.
  *
  * @param {string} xml     raw feed body
@@ -147,6 +170,7 @@ module.exports = {
   parseFeed,
   extractProductUrls,
   matchKeywords,
+  firstExclusion,
   fetchSubreddit,
   USER_AGENT,
 };

@@ -109,3 +109,56 @@ test('sends a descriptive user agent', async () => {
   });
   assert.match(seen, /pokebot/);
 });
+
+// --- Exclusions --------------------------------------------------------------
+//
+// The set that drops on a given Wednesday isn't knowable ahead of time, so the
+// keyword list matches on product type and is deliberately loose. Exclusions
+// are what stop that looseness auto-buying merchandise.
+
+const { firstExclusion } = require('../src/discovery/reddit');
+
+test('firstExclusion names the word that rejected the title', () => {
+  assert.strictEqual(
+    firstExclusion('Pokemon Pikachu Crew Socks 2-Pack', ['sock', 'plush']),
+    'sock',
+  );
+  assert.strictEqual(firstExclusion('Pokemon TCG Booster Bundle', ['sock', 'plush']), null);
+});
+
+test('exclusions are case-insensitive and ignore blank entries', () => {
+  assert.strictEqual(firstExclusion('POKEMON PLUSH Toy', ['', '  ', 'PLUSH']), 'plush');
+  assert.strictEqual(firstExclusion('anything', []), null);
+  assert.strictEqual(firstExclusion(undefined, ['sock']), null);
+});
+
+test('a product-type keyword list catches an unknown set, and exclusions keep merch out', () => {
+  // Read the shipped defaults rather than a copy, so this fails if the lists
+  // drift. The set names below are invented on purpose: nothing in the config
+  // knows them, which is exactly the situation on a Wednesday night.
+  const { DEFAULT_RULES } = require('../app/state');
+  const keywords = DEFAULT_RULES.keywords;
+  const excludes = DEFAULT_RULES.excludeKeywords;
+
+  const wanted = [
+    'Pokemon TCG: Mega Evolution Ascended Heroes Booster Bundle (6 Packs)',
+    'Pokémon TCG Scarlet & Violet—Obsidian Flames Elite Trainer Box',
+    'Pokemon Trading Card Game Twilight Masquerade Booster Box',
+    'Pokemon TCG Some Unheard Of Set Premium Collection',
+  ];
+  for (const title of wanted) {
+    assert.ok(matchKeywords(title, keywords).length > 0, `should match: ${title}`);
+    assert.strictEqual(firstExclusion(title, excludes), null, `should not exclude: ${title}`);
+  }
+
+  const junk = [
+    'Pokemon Pikachu Youth Crew Socks',
+    'Pokemon Charizard Plush Toy 8 inch',
+    'Pokemon Card Sleeves 65 Count',
+    'Pokemon Kids Backpack and Lunch Bag Set',
+    'Pokemon Charizard PSA 10 Graded Single Card',
+  ];
+  for (const title of junk) {
+    assert.ok(firstExclusion(title, excludes) !== null, `should be excluded: ${title}`);
+  }
+});

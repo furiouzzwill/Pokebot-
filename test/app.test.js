@@ -375,3 +375,71 @@ test('search tabs are sent only while the window is open, and only for retailers
   extension.ws.close();
   dashboard.ws.close();
 });
+
+test('an unknown set is auto-added during a window, and merch is rejected', async () => {
+  const dashboard = client('dashboard');
+  const extension = client('extension');
+  await Promise.all([dashboard.ready, extension.ready]);
+
+  dashboard.send({
+    type: 'setRules',
+    rules: {
+      dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+      keywords: ['booster bundle', 'elite trainer box'],
+      excludeKeywords: ['sock', 'plush'],
+    },
+  });
+  dashboard.send({
+    type: 'setSettings',
+    settings: {
+      dropScheduleEnabled: true,
+      dropTime: '00:00',
+      dropLeadMinutes: 0,
+      dropTrailMinutes: 24 * 60,
+      autoAddDuringDrop: true,
+      autoAddDiscoveries: false,
+      discoveryEnabled: true,
+    },
+  });
+  await extension.next((m) => m.type === 'sync' && m.settings?.dropActive === true);
+
+  // A set name nothing in the config has ever seen, next to merchandise.
+  extension.send({
+    type: 'event',
+    kind: 'discovered',
+    site: 'walmart',
+    url: 'https://www.walmart.com/browse/pokemon',
+    products: [
+      {
+        url: 'https://www.walmart.com/ip/unknown-set-bundle/700000001',
+        id: '700000001',
+        site: 'walmart',
+        title: 'Pokemon TCG: Utterly Unheard Of Set Booster Bundle (6 Packs)',
+      },
+      {
+        url: 'https://www.walmart.com/ip/pikachu-socks/700000002',
+        id: '700000002',
+        site: 'walmart',
+        title: 'Pokemon Pikachu Crew Socks Booster Bundle 2-Pack',
+      },
+    ],
+  });
+
+  // The unknown set reaches the watchlist with no human step.
+  const state = await dashboard.next(
+    (m) => m.type === 'state' && m.watchlist.some((i) => i.url.includes('700000001')),
+  );
+  assert.ok(
+    !state.watchlist.some((i) => i.url.includes('700000002')),
+    'socks matched a keyword and must have been excluded before auto-add',
+  );
+
+  // And the extension is told to open a tab for it, which is what carts.
+  const sync = await extension.next(
+    (m) => m.type === 'sync' && m.watchlist.some((i) => i.url.includes('700000001')),
+  );
+  assert.ok(sync.watchlist.some((i) => i.url.includes('700000001')));
+
+  dashboard.ws.close();
+  extension.ws.close();
+});

@@ -21,7 +21,7 @@ const os = require('os');
 const { WebSocketServer } = require('ws');
 
 const state = require('./state');
-const { fetchSubreddit, matchKeywords } = require('../src/discovery/reddit');
+const { fetchSubreddit, matchKeywords, firstExclusion } = require('../src/discovery/reddit');
 const { dropWindow, scheduleFrom } = require('../src/discovery/schedule');
 const discordIn = require('../src/discovery/discord');
 const { postAlert, DEFAULT_EVENTS } = require('../src/discord');
@@ -325,8 +325,21 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     let added = 0;
     for (const product of products) {
       if (!product || !product.url) continue;
-      const matched = matchKeywords(product.title || product.url, rules.keywords);
+      const title = product.title || product.url;
+      const matched = matchKeywords(title, rules.keywords);
       if (rules.keywords.length > 0 && matched.length === 0) continue;
+
+      // Checked after the positive match, so the log says which word did it.
+      const excluded = firstExclusion(title, rules.excludeKeywords);
+      if (excluded) {
+        state.recordEvent({
+          kind: 'filtered',
+          detail: `Ignored "${title.slice(0, 80)}" -- matched exclusion "${excluded}".`,
+          url: product.url,
+          site: product.site,
+        });
+        continue;
+      }
 
       const entry = state.addDiscovery({
         key: product.url,
@@ -574,6 +587,10 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     close: () => new Promise((resolve) => {
       clearTimeout(redditTimer);
       clearTimeout(discordTimer);
+      clearInterval(dropTimer);
+      // Sockets keep an HTTP server's close() pending indefinitely, and the
+      // dashboard's clients are long-lived WebSockets by design.
+      for (const client of clients) client.socket.terminate();
       server.close(resolve);
     }),
   };

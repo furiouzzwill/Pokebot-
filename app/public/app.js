@@ -11,7 +11,7 @@ const NUMS = [
   'dropLeadMinutes', 'dropTrailMinutes', 'searchSeconds', 'dropSearchSeconds',
 ];
 const TEXTS = ['dropTime', 'dropTimeZone'];
-const LISTS = ['keywords', 'subreddits', 'dropDays', 'searchUrls'];
+const LISTS = ['keywords', 'excludeKeywords', 'subreddits', 'dropDays', 'searchUrls'];
 
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token');

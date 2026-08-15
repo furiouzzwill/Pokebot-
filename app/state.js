@@ -76,7 +76,25 @@ const DEFAULT_SETTINGS = {
 /** Subreddits and keywords are lists, kept out of the numeric/boolean block. */
 const DEFAULT_RULES = {
   subreddits: ['pkmntcgdeals', 'PokeInvesting'],
-  keywords: ['pokemon', 'pokémon', 'elite trainer', 'booster bundle', 'etb'],
+  // Deliberately loose. The set that drops on a given Wednesday isn't knowable
+  // in advance, so these match the brand and the product *type* -- both of
+  // which outlive any particular set -- and excludeKeywords does the rejecting.
+  // Tightening this instead would miss the very drop it exists to catch, and
+  // 'pokemon' is also what matches a Reddit announcement, which never mentions
+  // a product type at all.
+  keywords: [
+    'pokemon', 'pokémon',
+    'booster bundle', 'elite trainer box', 'etb', 'booster box', 'booster pack',
+    'collection box', 'premium collection', 'surprise box', 'binder collection',
+  ],
+  // Rejected even when a keyword matched. A Pokemon search page is mostly
+  // merchandise, and matching loosely enough to catch an unknown set means
+  // catching all of that too.
+  excludeKeywords: [
+    'sock', 'plush', 'figure', 'shirt', 'hoodie', 'backpack', 'lunch',
+    'sleeve', 'binder page', 'toploader', 'blanket', 'mug', 'poster',
+    'costume', 'puzzle', 'single card', 'psa ', 'graded',
+  ],
   // Weekdays the drop schedule fires on. Walmart's Pokemon restocks are a
   // Wednesday-night fixture, hence the default.
   dropDays: ['wednesday'],
@@ -285,7 +303,7 @@ function dismissDiscovery(key) {
 
 function setRules(patch) {
   const next = { ...state.rules };
-  for (const field of ['subreddits', 'keywords', 'dropDays', 'searchUrls']) {
+  for (const field of ['subreddits', 'keywords', 'excludeKeywords', 'dropDays', 'searchUrls']) {
     if (!Array.isArray(patch?.[field])) continue;
     next[field] = patch[field]
       .map((value) => String(value).trim())
