@@ -10,6 +10,7 @@ const NUMS = [
   'maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
   'redditIntervalMinutes', 'discordPollSeconds',
   'dropLeadMinutes', 'dropTrailMinutes', 'searchSeconds', 'dropSearchSeconds',
+  'maxAutoAddsPerWindow',
 ];
 const TEXTS = ['dropTime', 'dropTimeZone'];
 const LISTS = ['keywords', 'excludeKeywords', 'subreddits', 'dropDays', 'searchUrls'];

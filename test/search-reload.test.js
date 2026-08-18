@@ -312,7 +312,8 @@ test('a re-query during the drop does not re-baseline', { skip: SKIP }, async ()
       loads += 1;
       // Nothing new on load 2; the drop lands on load 3. If reloading rebuilt
       // the baseline, load 3's product would be swallowed as "pre-existing".
-      const extra = loads >= 3 ? '<a href="/p/late-drop/-/A-88888888">Late Drop ETB</a>' : '';
+      // Above the baseline id (93954435): a real new listing always is.
+      const extra = loads >= 3 ? '<a href="/p/late-drop/-/A-99888888">Late Drop ETB</a>' : '';
       return route.fulfill({ status: 200, contentType: 'text/html', body: page(extra) });
     });
 
@@ -335,10 +336,65 @@ test('a re-query during the drop does not re-baseline', { skip: SKIP }, async ()
       .filter((m) => m.kind === 'discovered')
       .flatMap((m) => m.products.map((p) => p.id));
     assert.ok(
-      reported.includes('88888888'),
+      reported.includes('99888888'),
       'a product appearing after a reload must still be reported',
     );
     assert.ok(!reported.includes('93954435'), 'old stock must stay excluded across reloads');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('an old SKU resurfacing on page one is never reported', { skip: SKIP }, async () => {
+  // Taken from a live run. The baseline saw the newest listing at 1013118349;
+  // Prismatic Evolutions (1001632618) was out of stock then, reappeared on page
+  // one twenty minutes later, looked brand new, and was carted.
+  const browser = await chromium.launch(launchOptions());
+  try {
+    const tab = await browser.newPage();
+    let loads = 0;
+
+    const shelf = (extra) => `<!doctype html><html><head><title>pokemon : Target</title></head>
+      <body><div id="root">
+        <a href="/p/lumiose-tin/-/A-1013118349">Pokemon Lumiose City Mini Tin</a>
+        ${extra}
+      </div></body></html>`;
+
+    await tab.route('**/*', (route) => {
+      if (!route.request().url().startsWith('https://www.target.com/s')) return route.abort();
+      loads += 1;
+      const extra = loads > 1
+        ? `<a href="/p/prismatic/-/A-1001632618">Prismatic Evolutions Booster Pack</a>
+           <a href="/p/tonights-drop/-/A-1013500000">Tonights Drop Booster Bundle</a>`
+        : '';
+      return route.fulfill({ status: 200, contentType: 'text/html', body: shelf(extra) });
+    });
+
+    const messages = [];
+    await tab.exposeFunction('__pokebotReport', (m) => { messages.push(m); });
+    await tab.addInitScript(`
+      ${chromeStub({ searchSeconds: 1.5, onlyNewListings: true }, { report: true })}
+      window.addEventListener('DOMContentLoaded', () => {
+        ${configWithTinyFloor()}
+        ${searchJs.replace(/const BASELINE_MS = [^;]+;/, 'const BASELINE_MS = 600;')}
+      });
+    `);
+
+    await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.waitForTimeout(5000);
+
+    const reported = messages
+      .filter((m) => m.kind === 'discovered')
+      .flatMap((m) => m.products.map((p) => p.id));
+
+    assert.ok(
+      !reported.includes('1001632618'),
+      'an id below the baseline floor is old stock resurfacing, not a drop',
+    );
+    assert.ok(
+      reported.includes('1013500000'),
+      'an id above the floor is genuinely new and must still be reported',
+    );
   } finally {
     await browser.close();
   }

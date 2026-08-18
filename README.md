@@ -268,6 +268,20 @@ The consequence worth knowing: the tab has to be open *before* the drop. The
 lead time exists for exactly this, and the re-query is held off until the
 baseline finishes so a fast interval cannot cut it short.
 
+Absence from the page is not enough on its own. A results page churns as
+availability flips, so an old set that was out of stock at 02:45 reappears on
+page one at 03:10 and looks brand new. The baseline therefore also records the
+**highest product id** it saw, and nothing at or below that is ever reported.
+Both retailers issue ids that climb over time, so a genuinely new listing is
+above the floor and every reappearing old SKU is below it. The `baselined`
+line in the feed names the floor it chose.
+
+**Max auto-adds per window** caps how many finds one window may add. Each added
+item opens its own pinned tab and carts independently -- `maxCarts` is *per
+tab* -- so an uncapped window can fill a cart with a dozen things, and the tab
+count alone is enough to earn a bot check. Finds beyond the cap wait in
+**Discovered** rather than being thrown away.
+
 With **Open the search tabs itself** on, you don't have to remember to leave a
 tab open on a Wednesday afternoon — the extension opens the pages when the
 window opens and closes them again afterwards. Only `https` URLs on

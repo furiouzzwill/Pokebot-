@@ -79,6 +79,43 @@ function saveSeen(seen) {
 const BASELINE_MS = 8000;
 const BASELINE_KEY = `pokebot:baselined:${location.pathname}${location.search}`;
 
+/**
+ * The highest product id present at baseline. Nothing at or below it is ever
+ * reported again.
+ *
+ * Absence from the page is too weak a test for "new". A retailer's first page
+ * of results churns constantly as availability flips, so an old set that was
+ * out of stock at 02:45 reappears at 03:10 and looks brand new -- which on a
+ * live run means carting it. Both retailers issue ids that climb over time, so
+ * the newest thing on the shelf when watching starts is a floor: a genuinely
+ * new listing is above it, and every reappearing old SKU is below.
+ */
+const FLOOR_KEY = `pokebot:floor:${location.pathname}${location.search}`;
+
+function toId(value) {
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+function loadFloor() {
+  try {
+    return toId(sessionStorage.getItem(FLOOR_KEY) || '0') ?? 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+function saveFloor(floor) {
+  try {
+    sessionStorage.setItem(FLOOR_KEY, floor.toString());
+  } catch {
+    // Falls back to in-memory for this page load.
+  }
+}
+
 function alreadyBaselined() {
   try {
     return sessionStorage.getItem(BASELINE_KEY) === '1';
@@ -101,6 +138,7 @@ const state = {
   seen: loadSeen(),
   settings: null,
   baselineUntil: 0,
+  floor: loadFloor(),
   timer: null,
   reloadTimer: null,
   observer: null,
@@ -173,7 +211,20 @@ function scrape() {
   return found;
 }
 
-function report(products) {
+function report(allProducts) {
+  // Below the floor is an old SKU resurfacing, not a drop. Marked seen so it
+  // is not reconsidered every tick.
+  const products = [];
+  for (const product of allProducts) {
+    const id = toId(product.id);
+    if (state.floor > 0n && (id === null || id <= state.floor)) {
+      state.seen.add(product.id);
+      continue;
+    }
+    products.push(product);
+  }
+  if (products.length !== allProducts.length) saveSeen(state.seen);
+
   if (products.length === 0) return;
   for (const product of products) state.seen.add(product.id);
   saveSeen(state.seen);
@@ -238,10 +289,20 @@ function finishBaseline() {
 
   for (const product of scrape()) state.seen.add(product.id);
   saveSeen(state.seen);
+
+  for (const seenId of state.seen) {
+    const id = toId(seenId);
+    if (id !== null && id > state.floor) state.floor = id;
+  }
+  saveFloor(state.floor);
+
   state.baselineUntil = 0;
   markBaselined();
 
-  log(`baselined ${state.seen.size} existing listing(s); reporting only new ones from here`);
+  log(
+    `baselined ${state.seen.size} existing listing(s); `
+    + `reporting only ids above ${state.floor}`,
+  );
   try {
     chrome.runtime.sendMessage({
       kind: 'baseline',

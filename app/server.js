@@ -197,11 +197,14 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
    * tabs for no reason.
    */
   let lastDropActive = null;
+  let autoAddsThisWindow = 0;
   function watchDropWindow() {
     const { active } = dropState();
     if (active !== lastDropActive) {
       const first = lastDropActive === null;
       lastDropActive = active;
+      // A fresh budget per window, so last night's spend can't carry over.
+      if (active) autoAddsThisWindow = 0;
       if (!first) {
         state.recordEvent({
           kind: active ? 'drop-window-open' : 'drop-window-closed',
@@ -420,14 +423,32 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     // setting: the whole point of the window is that there is no time to press
     // Watch. Everything downstream is unchanged, so an auto-added item still
     // meets the price cap, the per-order limits and the daily order ledger.
-    const autoAdd =
-      settings.autoAddDiscoveries || (settings.autoAddDuringDrop && dropState().active);
+    const inWindow = dropState().active;
+    const autoAdd = settings.autoAddDiscoveries || (settings.autoAddDuringDrop && inWindow);
     if (autoAdd) {
       for (const found of [...state.getState().discoveries]) {
         if (found.dismissed || found.kind !== 'product' || !found.url) continue;
+
+        // Every auto-added item opens its own pinned tab and carts on its own,
+        // because maxCarts is per tab. Unbounded, one loose keyword match fills
+        // a cart with a dozen things and the tab count alone earns a bot check.
+        // The rest stay in the review queue rather than being thrown away.
+        if (inWindow && autoAddsThisWindow >= settings.maxAutoAddsPerWindow) {
+          state.recordEvent({
+            kind: 'filtered',
+            detail:
+              `Reached ${settings.maxAutoAddsPerWindow} auto-add(s) for this window. `
+              + `"${String(found.title).slice(0, 60)}" is waiting in Discovered.`,
+            url: found.url,
+            site: found.site,
+          });
+          break;
+        }
+
         try {
           state.addItem({ url: found.url, name: found.title });
           state.dismissDiscovery(found.key);
+          if (inWindow) autoAddsThisWindow += 1;
         } catch {
           // Already on the list, or not a supported URL.
         }

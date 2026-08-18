@@ -80,6 +80,11 @@ function client(role) {
   };
 }
 
+/** Force a closed->open transition so the per-window auto-add budget resets. */
+function resetWindowBudget() {
+  dashboard.watchDropWindow();
+}
+
 test('dashboard receives state on connect', async () => {
   const dash = client('dashboard');
   await dash.ready;
@@ -439,6 +444,101 @@ test('an unknown set is auto-added during a window, and merch is rejected', asyn
     (m) => m.type === 'sync' && m.watchlist.some((i) => i.url.includes('700000001')),
   );
   assert.ok(sync.watchlist.some((i) => i.url.includes('700000001')));
+
+  dashboard.ws.close();
+  extension.ws.close();
+});
+
+test('a drop window will not auto-add more than its budget', async () => {
+  const dashboard = client('dashboard');
+  const extension = client('extension');
+  await Promise.all([dashboard.ready, extension.ready]);
+
+  dashboard.send({
+    type: 'setRules',
+    rules: {
+      dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+      keywords: ['booster'],
+      excludeKeywords: [],
+    },
+  });
+
+  // Close and reopen the window so the budget resets, the way a real night
+  // starts. The counter is per window, not per process.
+  dashboard.send({ type: 'setSettings', settings: { dropScheduleEnabled: false } });
+  await dashboard.next((m) => m.type === 'state' && m.settings.dropScheduleEnabled === false);
+  // Register the closed state, so re-opening counts as a transition. The
+  // budget resets on the edge, not on every tick.
+  resetWindowBudget();
+
+  dashboard.send({
+    type: 'setSettings',
+    settings: {
+      dropScheduleEnabled: true,
+      dropTime: '00:00',
+      dropLeadMinutes: 0,
+      dropTrailMinutes: 24 * 60,
+      autoAddDuringDrop: true,
+      autoAddDiscoveries: false,
+      discoveryEnabled: true,
+      maxAutoAddsPerWindow: 2,
+    },
+  });
+  await extension.next((m) => m.type === 'sync' && m.settings?.maxAutoAddsPerWindow === 2);
+
+  // Start from a clean slate: earlier tests leave watchlist rows and
+  // undismissed finds behind, and those would spend this window's budget
+  // before any of this test's products are reached.
+  const dirty = await dashboard.next((m) => m.type === 'state');
+  for (const item of dirty.watchlist) dashboard.send({ type: 'removeItem', id: item.id });
+  for (const found of dirty.discoveries || []) {
+    dashboard.send({ type: 'dismissDiscovery', key: found.key });
+  }
+  const clean = await dashboard.next(
+    (m) => m.type === 'state'
+      && m.watchlist.length === 0
+      && !(m.discoveries || []).some((d) => !d.dismissed),
+  );
+  const before = clean.watchlist.length;
+
+  // Reset the budget last, so nothing above can spend it.
+  resetWindowBudget();
+
+  // Five matching finds in one batch, as a churning results page produces.
+  extension.send({
+    type: 'event',
+    kind: 'discovered',
+    site: 'target',
+    url: 'https://www.target.com/s?searchTerm=pokemon',
+    products: [1, 2, 3, 4, 5].map((n) => ({
+      url: `https://www.target.com/p/booster-${n}/-/A-102000000${n}`,
+      id: `102000000${n}`,
+      site: 'target',
+      title: `Zubatty Booster Pack ${n}`,
+    })),
+  });
+
+  // recordEvent writes history; the dashboard sees it in the next state push,
+  // not as a live 'event' message.
+  // Match this test's own products: history accumulates across the file, so a
+  // cap logged by an earlier test would otherwise satisfy this instantly.
+  const state = await dashboard.next(
+    (m) => m.type === 'state'
+      && (m.history || []).some((e) => /Reached \d+ auto-add.*Zubatty/.test(e.detail || '')),
+  );
+
+  const added = state.watchlist.length - before;
+  assert.ok(added > 0, 'the budget should have let something through');
+  assert.ok(
+    added <= 2,
+    `the window budget is 2, but ${added} items reached the watchlist -- each one `
+    + 'opens a tab and carts, which is what filled a cart with thirteen things',
+  );
+  // The rest are held for review, not discarded.
+  assert.ok(
+    (state.discoveries || []).some((d) => !d.dismissed && /Zubatty/.test(d.title || '')),
+    'blocked finds must stay in the review queue',
+  );
 
   dashboard.ws.close();
   extension.ws.close();

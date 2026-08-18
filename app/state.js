@@ -70,6 +70,11 @@ const DEFAULT_SETTINGS = {
   // what appears afterwards. This is what keeps a drop-night run from carting
   // old stock that merely happens to be in stock.
   onlyNewListings: true,
+  // Hard ceiling on how many finds one drop window may auto-add. Each added
+  // item opens its own pinned tab and carts independently -- maxCarts is per
+  // tab, so thirteen tabs is thirteen carts, and thirteen tabs hammering a
+  // retailer is the traffic pattern that earns a bot check.
+  maxAutoAddsPerWindow: 2,
 
   // --- Discord --------------------------------------------------------------
   // Credentials live in .env, not here. These only decide whether to use them.
