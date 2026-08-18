@@ -13,12 +13,16 @@ const assert = require('node:assert');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const os = require('os');
 
 const { WebSocket } = require('ws');
 
-const configDir = path.resolve(__dirname, '..', 'config');
-const realState = path.join(configDir, 'app-state.json');
-const backup = fs.existsSync(realState) ? fs.readFileSync(realState) : null;
+// Each test file gets its own state file. node --test runs files in parallel
+// processes, and they used to share config/app-state.json -- so one file's
+// setRules() silently rewrote another file's fixtures. That passed locally on
+// timing and failed in CI.
+const TMP_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'pokebot-state-'));
+process.env.POKEBOT_STATE_FILE = path.join(TMP_STATE, 'app-state.json');
 
 let dashboard;
 let port;
@@ -42,7 +46,6 @@ test.before(async () => {
   process.env.DISCORD_WEBHOOK_URL = `http://127.0.0.1:${hookPort}/webhook`;
   process.env.DISCORD_MENTION = '@here';
 
-  if (fs.existsSync(realState)) fs.unlinkSync(realState);
   delete require.cache[require.resolve('../app/state')];
   delete require.cache[require.resolve('../app/server')];
   const { createDashboard } = require('../app/server');
@@ -57,8 +60,7 @@ test.after(async () => {
   delete process.env.DISCORD_MENTION;
   delete process.env.DISCORD_BOT_TOKEN;
   delete process.env.DISCORD_CHANNEL_IDS;
-  if (backup) fs.writeFileSync(realState, backup);
-  else if (fs.existsSync(realState)) fs.unlinkSync(realState);
+  fs.rmSync(TMP_STATE, { recursive: true, force: true });
 });
 
 function client(role) {

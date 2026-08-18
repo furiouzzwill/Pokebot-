@@ -9,18 +9,21 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const { WebSocket } = require('ws');
 
-const configDir = path.resolve(__dirname, '..', 'config');
-const realState = path.join(configDir, 'app-state.json');
-const backup = fs.existsSync(realState) ? fs.readFileSync(realState) : null;
+// Each test file gets its own state file. node --test runs files in parallel
+// processes, and they used to share config/app-state.json -- so one file's
+// setRules() silently rewrote another file's fixtures. That passed locally on
+// timing and failed in CI.
+const TMP_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'pokebot-state-'));
+process.env.POKEBOT_STATE_FILE = path.join(TMP_STATE, 'app-state.json');
 
 let dashboard;
 let port;
 
 test.before(async () => {
-  if (fs.existsSync(realState)) fs.unlinkSync(realState);
   delete require.cache[require.resolve('../app/state')];
   delete require.cache[require.resolve('../app/server')];
   const { createDashboard } = require('../app/server');
@@ -30,8 +33,7 @@ test.before(async () => {
 
 test.after(async () => {
   await dashboard.close();
-  if (backup) fs.writeFileSync(realState, backup);
-  else if (fs.existsSync(realState)) fs.unlinkSync(realState);
+  fs.rmSync(TMP_STATE, { recursive: true, force: true });
 });
 
 function client(role) {

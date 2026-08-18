@@ -11,14 +11,15 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// Point state at a scratch file so a test run can't touch a real watchlist.
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pokebot-test-'));
+// Each test file gets its own state file. node --test runs files in parallel
+// processes, and they used to share config/app-state.json -- so one file's
+// setRules() silently rewrote another file's fixtures. That passed locally on
+// timing and failed in CI.
+const TMP_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'pokebot-state-'));
+process.env.POKEBOT_STATE_FILE = path.join(TMP_STATE, 'app-state.json');
 process.env.POKEBOT_PORT = '0';
 
 const stateModule = require.resolve('../app/state');
-const configDir = path.resolve(__dirname, '..', 'config');
-const realState = path.join(configDir, 'app-state.json');
-const backup = fs.existsSync(realState) ? fs.readFileSync(realState) : null;
 
 let WebSocket;
 let server;
@@ -28,7 +29,6 @@ let dashboard;
 
 test.before(async () => {
   ({ WebSocket } = require('ws'));
-  if (fs.existsSync(realState)) fs.unlinkSync(realState);
   delete require.cache[stateModule];
   const { createDashboard } = require('../app/server');
   dashboard = createDashboard({ port: 0 });
@@ -36,11 +36,9 @@ test.before(async () => {
   port = await dashboard.listen();
 });
 
-test.after(() => {
-  server.close();
-  if (backup) fs.writeFileSync(realState, backup);
-  else if (fs.existsSync(realState)) fs.unlinkSync(realState);
-  fs.rmSync(TMP, { recursive: true, force: true });
+test.after(async () => {
+  await dashboard.close();
+  fs.rmSync(TMP_STATE, { recursive: true, force: true });
 });
 
 /** Connect a client and collect messages, with a helper to await one. */
