@@ -48,7 +48,8 @@ async function drive({ html, url, mutate }) {
       window.chrome = {
         runtime: { sendMessage: (m) => window.__msgs.push(m) },
         storage: {
-          sync: { get: async (defaults) => ({ ...defaults }) },
+          // These test scraping, not drop-night filtering, so report on first load.
+          sync: { get: async (defaults) => ({ ...defaults, onlyNewListings: false }) },
           onChanged: { addListener: () => {} },
         },
       };

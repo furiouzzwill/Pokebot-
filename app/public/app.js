@@ -4,6 +4,7 @@ const BOOLS = [
   'armed', 'dryRun', 'autoCheckout', 'placeOrder',
   'discoveryEnabled', 'autoAddDiscoveries', 'discordAlerts',
   'dropScheduleEnabled', 'autoAddDuringDrop', 'openSearchDuringDrop',
+  'onlyNewListings',
 ];
 const NUMS = [
   'maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
@@ -106,6 +107,8 @@ const STATUS_TEXT = {
   'dry-run': 'dry run hit',
   stopped: 'stopped',
   'not-armed': 'idle',
+  baseline: 'baselined',
+  filtered: 'filtered out',
 };
 
 function renderWatchlist(items) {

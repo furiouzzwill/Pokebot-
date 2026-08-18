@@ -61,9 +61,46 @@ function saveSeen(seen) {
   }
 }
 
+/**
+ * On the first load of a results page, everything already listed is recorded as
+ * seen without being reported: the point of watching a category page is the
+ * product that wasn't there a minute ago, and the shelf it arrives on is not
+ * news. Without this the first scrape announces the entire existing catalogue,
+ * which -- with auto-add on during a drop window -- means carting whatever old
+ * stock happens to be in stock while the actual drop is still minutes away.
+ *
+ * Time-boxed rather than single-shot because results hydrate after load and
+ * again on scroll, so the first tick often sees an empty page. Anything that
+ * appears during the baseline period counts as pre-existing.
+ *
+ * Only ever on the first load in a tab session. A re-query during the drop must
+ * report immediately -- re-baselining then would swallow the drop itself.
+ */
+const BASELINE_MS = 8000;
+const BASELINE_KEY = `pokebot:baselined:${location.pathname}${location.search}`;
+
+function alreadyBaselined() {
+  try {
+    return sessionStorage.getItem(BASELINE_KEY) === '1';
+  } catch {
+    // No storage: treat as baselined so a failure can't cause the whole page
+    // to be announced as new.
+    return true;
+  }
+}
+
+function markBaselined() {
+  try {
+    sessionStorage.setItem(BASELINE_KEY, '1');
+  } catch {
+    // Dedupe still falls back to the server's, which keys on product URL.
+  }
+}
+
 const state = {
   seen: loadSeen(),
   settings: null,
+  baselineUntil: 0,
   timer: null,
   reloadTimer: null,
   observer: null,
@@ -173,7 +210,50 @@ function tick() {
     }
     return;
   }
-  report(scrape());
+
+  const found = scrape();
+
+  // While baselining, everything on the page is pre-existing stock: absorb it
+  // and report nothing. finishBaseline() ends this on its own timer.
+  if (state.baselineUntil) {
+    for (const product of found) state.seen.add(product.id);
+    if (found.length > 0) saveSeen(state.seen);
+    return;
+  }
+
+  report(found);
+}
+
+/**
+ * End the baseline period.
+ *
+ * On its own timer rather than waiting for a tick to land past the deadline:
+ * ticks are 3s apart and a re-query can reload the page before one arrives, in
+ * which case the baseline would never complete, the session flag would never be
+ * set, and the watcher would re-baseline on every load -- reporting nothing at
+ * all, on the one night it matters.
+ */
+function finishBaseline() {
+  if (!state.baselineUntil) return;
+
+  for (const product of scrape()) state.seen.add(product.id);
+  saveSeen(state.seen);
+  state.baselineUntil = 0;
+  markBaselined();
+
+  log(`baselined ${state.seen.size} existing listing(s); reporting only new ones from here`);
+  try {
+    chrome.runtime.sendMessage({
+      kind: 'baseline',
+      detail:
+        `Ignoring ${state.seen.size} listing(s) already on this page. `
+        + 'Only products that appear from now on will be reported.',
+      site: SITE,
+      url: location.href,
+    });
+  } catch {
+    // Service worker asleep; the console still has it.
+  }
 }
 
 function stop() {
@@ -185,7 +265,12 @@ function stop() {
 function scheduleReload() {
   clearTimeout(state.reloadTimer);
 
-  const base = reloadSeconds(state.settings) * 1000;
+  let base = reloadSeconds(state.settings) * 1000;
+
+  // A reload mid-baseline would discard it and start over. Hold the re-query
+  // until the baseline has completed, however short the interval is set.
+  const remaining = state.baselineUntil - Date.now();
+  if (remaining > 0) base = Math.max(base, remaining + 500);
   // Jittered so several open search tabs don't re-query in lockstep, which is
   // both wasteful and a conspicuous traffic pattern.
   const spread = base * JITTER_FRACTION;
@@ -219,6 +304,12 @@ async function applySettings() {
 
 async function start() {
   state.settings = await loadSettings();
+
+  if (state.settings.onlyNewListings && !alreadyBaselined()) {
+    state.baselineUntil = Date.now() + BASELINE_MS;
+    setTimeout(finishBaseline, BASELINE_MS);
+    log('baselining what is already listed; nothing will be reported for a moment');
+  }
 
   // Results arrive after hydration and again on infinite scroll, so watch the
   // DOM rather than reading once on load.

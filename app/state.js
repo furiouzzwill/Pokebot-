@@ -66,6 +66,10 @@ const DEFAULT_SETTINGS = {
   // close them when it shuts. Without this the watcher only ever sees a tab
   // you remembered to leave open yourself.
   openSearchDuringDrop: true,
+  // Ignore everything already listed when a search tab opens, and report only
+  // what appears afterwards. This is what keeps a drop-night run from carting
+  // old stock that merely happens to be in stock.
+  onlyNewListings: true,
 
   // --- Discord --------------------------------------------------------------
   // Credentials live in .env, not here. These only decide whether to use them.

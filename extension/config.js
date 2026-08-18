@@ -70,6 +70,10 @@ const DEFAULTS = {
   // told nothing more than whether a window is currently open.
   dropSearchSeconds: 10,
   dropActive: false,
+
+  // Report only products that appear *after* the tab opens. What is already on
+  // the shelf when the watcher starts is not a drop, and auto-add would buy it.
+  onlyNewListings: true,
 };
 
 // Below this the re-query stops looking like a person with a tab open. A bot

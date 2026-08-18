@@ -96,7 +96,7 @@ test('re-queries the page rather than trusting a stale snapshot', { skip: SKIP }
     // registered at document_idle does. The interval now comes from settings,
     // so the test asks for a fast one rather than rewriting the source.
     await tab.addInitScript(`
-      ${chromeStub({ searchSeconds: 1.2, dropActive: false }, { report: true })}
+      ${chromeStub({ searchSeconds: 1.2, dropActive: false, onlyNewListings: false }, { report: true })}
       window.addEventListener('DOMContentLoaded', () => {
         ${configWithTinyFloor()}
         ${searchJs}
@@ -164,7 +164,7 @@ test('an open drop window speeds the re-query up, live', { skip: SKIP }, async (
 
     // Idle at a pace no test would wait for; the window is what makes it move.
     await tab.addInitScript(`
-      ${chromeStub({ searchSeconds: 3600, dropSearchSeconds: 0.6, dropActive: false })}
+      ${chromeStub({ searchSeconds: 3600, dropSearchSeconds: 0.6, dropActive: false, onlyNewListings: false })}
       window.addEventListener('DOMContentLoaded', () => {
         ${configWithTinyFloor()}
         ${searchJs}
@@ -229,7 +229,7 @@ test('newest listings are reported before the rest of the page', { skip: SKIP },
         ? route.fulfill({ status: 200, contentType: 'text/html', body: results })
         : route.abort(),
     );
-    await tab.addInitScript(chromeStub({ searchSeconds: 3600, dropActive: false }));
+    await tab.addInitScript(chromeStub({ searchSeconds: 3600, dropActive: false, onlyNewListings: false }));
     await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
     await tab.addScriptTag({ content: configJs });
     await tab.addScriptTag({ content: searchJs });
@@ -240,6 +240,105 @@ test('newest listings are reported before the rest of the page', { skip: SKIP },
       .filter((m) => m.kind === 'discovered')
       .flatMap((m) => m.products.map((p) => p.id));
     assert.deepStrictEqual(ids, ['99999999', '50000000', '10000001']);
+  } finally {
+    await browser.close();
+  }
+});
+
+// --- Only brand-new listings -------------------------------------------------
+//
+// The failure this prevents: a drop-night tab opens at 2:50am, the first scrape
+// announces the entire existing Pokemon catalogue, auto-add takes all of it and
+// carts whatever old stock is in stock -- while the actual drop is still ten
+// minutes away.
+
+test('what is already on the page when the tab opens is never reported', { skip: SKIP }, async () => {
+  const browser = await chromium.launch(launchOptions());
+  try {
+    const tab = await browser.newPage();
+    let loads = 0;
+
+    await tab.route('**/*', (route) => {
+      if (!route.request().url().startsWith('https://www.target.com/s')) return route.abort();
+      loads += 1;
+      // The drop lands on the second query, alongside the old stock.
+      const extra = loads > 1 ? '<a href="/p/tonights-drop/-/A-99999999">Tonights Drop ETB</a>' : '';
+      return route.fulfill({ status: 200, contentType: 'text/html', body: page(extra) });
+    });
+
+    const messages = [];
+    await tab.exposeFunction('__pokebotReport', (m) => { messages.push(m); });
+
+    await tab.addInitScript(`
+      ${chromeStub({ searchSeconds: 1.5, onlyNewListings: true }, { report: true })}
+      window.addEventListener('DOMContentLoaded', () => {
+        ${configWithTinyFloor()}
+        ${searchJs.replace(/const BASELINE_MS = [^;]+;/, 'const BASELINE_MS = 600;')}
+      });
+    `);
+
+    await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.waitForTimeout(5000);
+
+    const reported = messages
+      .filter((m) => m.kind === 'discovered')
+      .flatMap((m) => m.products.map((p) => p.id));
+
+    assert.ok(
+      !reported.includes('93954435'),
+      'the listing already on the page at open must never be reported -- it is old stock',
+    );
+    assert.ok(
+      reported.includes('99999999'),
+      'a listing that appeared after the baseline is the drop, and must be reported',
+    );
+    assert.ok(
+      messages.some((m) => m.kind === 'baseline'),
+      'the dashboard should be told the baseline happened',
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a re-query during the drop does not re-baseline', { skip: SKIP }, async () => {
+  const browser = await chromium.launch(launchOptions());
+  try {
+    const tab = await browser.newPage();
+    let loads = 0;
+
+    await tab.route('**/*', (route) => {
+      if (!route.request().url().startsWith('https://www.target.com/s')) return route.abort();
+      loads += 1;
+      // Nothing new on load 2; the drop lands on load 3. If reloading rebuilt
+      // the baseline, load 3's product would be swallowed as "pre-existing".
+      const extra = loads >= 3 ? '<a href="/p/late-drop/-/A-88888888">Late Drop ETB</a>' : '';
+      return route.fulfill({ status: 200, contentType: 'text/html', body: page(extra) });
+    });
+
+    const messages = [];
+    await tab.exposeFunction('__pokebotReport', (m) => { messages.push(m); });
+
+    await tab.addInitScript(`
+      ${chromeStub({ searchSeconds: 1.2, onlyNewListings: true }, { report: true })}
+      window.addEventListener('DOMContentLoaded', () => {
+        ${configWithTinyFloor()}
+        ${searchJs.replace(/const BASELINE_MS = [^;]+;/, 'const BASELINE_MS = 500;')}
+      });
+    `);
+
+    await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.waitForTimeout(6000);
+
+    assert.ok(loads >= 3, `expected several re-queries, got ${loads}`);
+    const reported = messages
+      .filter((m) => m.kind === 'discovered')
+      .flatMap((m) => m.products.map((p) => p.id));
+    assert.ok(
+      reported.includes('88888888'),
+      'a product appearing after a reload must still be reported',
+    );
+    assert.ok(!reported.includes('93954435'), 'old stock must stay excluded across reloads');
   } finally {
     await browser.close();
   }

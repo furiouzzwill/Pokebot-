@@ -254,6 +254,19 @@ Outside it, nothing changes.
 | **Auto-add during the window** | Auto-adds matching finds, but only while it's open. |
 | **Open the search tabs itself** | Opens the pages below when the window opens, closes them when it shuts. |
 | **Search pages to watch** | Walmart/Target search, browse or category URLs. |
+| **Only brand-new listings** | Ignore everything already on the page when the tab opens. |
+
+**Only brand-new listings** is the setting that makes a drop-night run safe.
+When a search tab opens it spends a few seconds recording what is already
+listed, reports none of it, and reports only what appears afterwards. Without
+it the first scrape announces the entire existing catalogue -- and with
+auto-add on, that means carting whatever old stock happens to be in stock
+while the actual drop is still minutes away. The Activity feed shows a
+`baselined` line with the count it decided to ignore.
+
+The consequence worth knowing: the tab has to be open *before* the drop. The
+lead time exists for exactly this, and the re-query is held off until the
+baseline finishes so a fast interval cannot cut it short.
 
 With **Open the search tabs itself** on, you don't have to remember to leave a
 tab open on a Wednesday afternoon — the extension opens the pages when the
