@@ -19,6 +19,11 @@ const DEFAULTS = {
   // marketplace reseller listing that replaced the sold-out first-party one.
   maxPrice: 100,
 
+  // Refuse to cart *below* this price. 0 disables it. The counterpart to
+  // maxPrice: a drop lineup pairs the box you want with blisters and sticker
+  // packs a tenth of the price, and a maximum alone cannot tell them apart.
+  minPrice: 0,
+
   // Stop after this many successful carts per tab, so a re-render loop can't
   // cart repeatedly.
   maxCarts: 1,

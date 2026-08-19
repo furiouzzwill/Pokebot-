@@ -134,6 +134,7 @@ Settings:
 | **Armed** | Off = alert only, never clicks. |
 | **Dry run** | Logs every click without making it. Default on. |
 | **Max price** | Won't cart above this — guards against a marketplace reseller listing replacing the sold-out first-party one. |
+| **Min price** | Won't cart *below* this. 0 = off. A drop is a lineup — the box you want sits beside blisters and sticker packs at a fifth of the price, and with one auto-add per window whichever is seen first is the one bought. A maximum alone can't tell them apart. |
 | **Re-check every** | Safety-net poll; a MutationObserver catches most changes instantly. |
 | **Reload page every** | 0 = never. Use 30s+; faster invites a bot check. |
 | **Auto-continue to checkout** | Walks cart → checkout, then stops with the order ready to submit. |

@@ -23,6 +23,7 @@ const DEFAULT_SETTINGS = {
   armed: false,
   dryRun: true,
   maxPrice: 100,
+  minPrice: 0,
   maxCarts: 1,
   pollMs: 1000,
   reloadSeconds: 0,

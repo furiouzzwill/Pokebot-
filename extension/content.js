@@ -184,6 +184,16 @@ async function attemptCart(button) {
     return false;
   }
 
+  // A drop is usually a lineup: an ETB next to a booster bundle, a blister and
+  // a sticker pack. A maximum cannot express "not the cheap accessory", and
+  // with one auto-add per window whichever the watcher sees first is the one
+  // bought -- so the $18 blister wins a race the $70 ETB was meant to win.
+  if (settings.minPrice > 0 && price < settings.minPrice) {
+    report('skipped', `Price $${price.toFixed(2)} is under your $${settings.minPrice} floor. Probably an accessory, not the drop.`);
+    stop('under price floor', { resumable: true });
+    return false;
+  }
+
   if (price > settings.maxPrice) {
     report('skipped', `Price $${price.toFixed(2)} is over your $${settings.maxPrice} cap. Probably a reseller listing.`);
     stop('price cap exceeded', { resumable: true });

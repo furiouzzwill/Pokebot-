@@ -7,7 +7,7 @@ const BOOLS = [
   'onlyNewListings',
 ];
 const NUMS = [
-  'maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
+  'maxPrice', 'minPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
   'redditIntervalMinutes', 'discordPollSeconds',
   'dropLeadMinutes', 'dropTrailMinutes', 'searchSeconds', 'dropSearchSeconds',
   'maxAutoAddsPerWindow',

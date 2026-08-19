@@ -261,3 +261,61 @@ test('the content script registers a settings listener', () => {
   assert.match(source, /stop\('price cap exceeded', \{ resumable: true \}\)/);
   assert.match(source, /stop\('challenge page'\)/, 'a challenge stop must not be resumable');
 });
+
+// --- Minimum price -----------------------------------------------------------
+//
+// A drop is a lineup, not one item: tonight's Ascended Heroes shelf is a $70
+// ETB beside a $31 bundle, a $75 poster collection and an $18 sticker blister.
+// With one auto-add per window, whichever is seen first is the one bought, and
+// a maximum price cannot express "not the cheap accessory".
+
+test('refuses to cart below the price floor', { skip: SKIP }, async () => {
+  const { events, clicks } = await drive({
+    html: targetHtml().replace('$24.99', '$18.00'),
+    url: TARGET_URL,
+    settings: { ...ARMED, dryRun: false, minPrice: 50, maxPrice: 100 },
+    mutate: ENABLE_BUTTON,
+    trackClicks: true,
+  });
+
+  assert.ok(kinds(events).includes('skipped'), 'an $18 blister must be refused');
+  assert.ok(!kinds(events).includes('carted'));
+  assert.equal(clicks, 0);
+});
+
+test('carts the item that clears the floor', { skip: SKIP }, async () => {
+  const { events, clicks } = await drive({
+    html: targetHtml().replace('$24.99', '$69.99'),
+    url: TARGET_URL,
+    settings: { ...ARMED, dryRun: false, minPrice: 50, maxPrice: 100 },
+    mutate: ENABLE_BUTTON,
+    trackClicks: true,
+  });
+
+  assert.ok(kinds(events).includes('carted'), 'the $69.99 ETB is the one wanted');
+  assert.equal(clicks, 1);
+});
+
+test('a floor of zero disables the check', { skip: SKIP }, async () => {
+  const { events } = await drive({
+    html: targetHtml().replace('$24.99', '$18.00'),
+    url: TARGET_URL,
+    settings: { ...ARMED, dryRun: false, minPrice: 0, maxPrice: 100 },
+    mutate: ENABLE_BUTTON,
+  });
+  assert.ok(kinds(events).includes('carted'), 'minPrice 0 must not block anything');
+});
+
+test('raising the floor mid-watch re-checks, lowering it resumes', { skip: SKIP }, async () => {
+  // The floor stop is a settings stop, so it lifts when the setting changes.
+  const { events } = await drive({
+    html: targetHtml().replace('$24.99', '$18.00'),
+    url: TARGET_URL,
+    settings: { ...ARMED, minPrice: 50, maxPrice: 100 },
+    mutate: ENABLE_BUTTON,
+    settingsChange: { minPrice: 10 },
+  });
+
+  assert.ok(kinds(events).includes('skipped'), 'refused under the original floor');
+  assert.ok(kinds(events).includes('dry-run'), 'lowering the floor should resume the tab');
+});
