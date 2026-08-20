@@ -23,6 +23,39 @@ const PAGE = (() => {
   return 'other';
 })();
 
+/**
+ * Walmart puts a hyped drop behind a virtual queue: you click Add to cart, you
+ * are placed in line, and some minutes later you are released with a short
+ * window to finish. Two things follow, and both are the opposite of what this
+ * script would otherwise do.
+ *
+ * Navigating away forfeits your place. The post-cart hop to /cart, which is
+ * right in the ordinary case, is exactly wrong here -- so it is skipped while a
+ * queue is showing.
+ *
+ * And clicking is wrong too: a waiting room has buttons, none of which should
+ * be pressed by anything but a person.
+ *
+ * Detection is on wording rather than markup because the queue is often a
+ * third-party product (Queue-it and similar) whose DOM is not Walmart's and is
+ * not stable. Erring toward "this might be a queue" is the safe direction: the
+ * cost of a false positive is one tab that waits for you, and the cost of a
+ * false negative is the drop.
+ */
+const QUEUE_TEXT =
+  /you'?re in line|you are in line|your place in line|place in the queue|waiting room|virtual queue|holding your spot|estimated wait|high demand.{0,40}wait|queue-?it/i;
+
+function onQueuePage() {
+  if (QUEUE_TEXT.test(document.title)) return true;
+  if (document.querySelector('iframe[src*="queue-it"], [id*="queueit"], [class*="queue-it"]')) {
+    return true;
+  }
+  // A waiting room is a small page. Bounded so a product page that merely
+  // mentions "high demand" in a review is not mistaken for one.
+  const text = document.body?.innerText || '';
+  return text.length < 3000 && QUEUE_TEXT.test(text);
+}
+
 const SEL = {
   walmart: {
     toCheckout: ['[data-automation-id="checkout-btn"]', '[data-testid="continue-to-checkout"]'],
@@ -246,6 +279,24 @@ function tick() {
     stop('challenge page');
     return;
   }
+
+  // Released from a queue you get a short window -- minutes, not seconds -- so
+  // there is time to do this properly. Clicking through a waiting room is not
+  // doing it properly: it forfeits the place and presses buttons meant for a
+  // person. Hold, and pick up when the real page arrives.
+  if (onQueuePage()) {
+    if (!state.announcedQueue) {
+      state.announcedQueue = true;
+      banner('in a queue — holding your place, do not close this tab', '#1d3557');
+      report(
+        'queued',
+        'Checkout is behind a queue. Holding this tab and clicking nothing. '
+        + 'It resumes on its own once you are released.',
+      );
+    }
+    return;
+  }
+  state.announcedQueue = false;
 
   if (PAGE === 'cart') handleCart();
   else if (PAGE === 'checkout') handleCheckout();

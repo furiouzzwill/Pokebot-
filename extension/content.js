@@ -37,6 +37,7 @@ const state = {
   stopped: false,
   // Whether the current stop is one a settings change is allowed to lift.
   stopResumable: false,
+  announcedQueue: false,
   lastSignature: '',
   observer: null,
   pollTimer: null,
@@ -102,6 +103,39 @@ function stop(reason, { resumable = false } = {}) {
   state.stopResumable = resumable;
   teardownWatchers();
   report('stopped', reason);
+}
+
+/**
+ * Walmart puts a hyped drop behind a virtual queue: you click Add to cart, you
+ * are placed in line, and some minutes later you are released with a short
+ * window to finish. Two things follow, and both are the opposite of what this
+ * script would otherwise do.
+ *
+ * Navigating away forfeits your place. The post-cart hop to /cart, which is
+ * right in the ordinary case, is exactly wrong here -- so it is skipped while a
+ * queue is showing.
+ *
+ * And clicking is wrong too: a waiting room has buttons, none of which should
+ * be pressed by anything but a person.
+ *
+ * Detection is on wording rather than markup because the queue is often a
+ * third-party product (Queue-it and similar) whose DOM is not Walmart's and is
+ * not stable. Erring toward "this might be a queue" is the safe direction: the
+ * cost of a false positive is one tab that waits for you, and the cost of a
+ * false negative is the drop.
+ */
+const QUEUE_TEXT =
+  /you'?re in line|you are in line|your place in line|place in the queue|waiting room|virtual queue|holding your spot|estimated wait|high demand.{0,40}wait|queue-?it/i;
+
+function onQueuePage() {
+  if (QUEUE_TEXT.test(document.title)) return true;
+  if (document.querySelector('iframe[src*="queue-it"], [id*="queueit"], [class*="queue-it"]')) {
+    return true;
+  }
+  // A waiting room is a small page. Bounded so a product page that merely
+  // mentions "high demand" in a review is not mistaken for one.
+  const text = document.body?.innerText || '';
+  return text.length < 3000 && QUEUE_TEXT.test(text);
 }
 
 function isDisabled(el) {
@@ -222,6 +256,14 @@ async function attemptCart(button) {
     if (settings.goToCartAfterAdd) {
       // Give the click's XHR a moment to land before navigating away.
       setTimeout(() => {
+        if (onQueuePage()) {
+          report(
+            'queued',
+            'In a queue after carting. Holding this tab -- navigating now would lose your place. '
+            + 'You usually get a few minutes to finish once released.',
+          );
+          return;
+        }
         location.href =
           SITE === 'walmart' ? 'https://www.walmart.com/cart' : 'https://www.target.com/cart';
       }, 2500);
@@ -238,6 +280,17 @@ function check() {
     stop('challenge page');
     return;
   }
+
+  // A queue is not a product page. Keep watching -- being released is a page
+  // change we want to notice -- but click nothing while it is showing.
+  if (onQueuePage()) {
+    if (!state.announcedQueue) {
+      state.announcedQueue = true;
+      report('queued', 'In a queue. Waiting for release; nothing will be clicked meanwhile.');
+    }
+    return;
+  }
+  state.announcedQueue = false;
 
   const button = findCartButton();
   const signature = button ? `${button.tagName}:${button.textContent?.trim()}` : 'none';

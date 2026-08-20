@@ -149,6 +149,27 @@ that setting changes: raise the cap on something it refused and it re-checks.
 A bot check and an already-placed cart are the exceptions, and stay stopped —
 one needs you, and the other must not be repeated by flipping a switch.
 
+### Queues
+
+A hyped Walmart drop goes behind a virtual waiting room: Add to cart puts you
+in line, and some minutes later you are released with a short window to
+finish. Two of this extension's ordinary behaviours are wrong there, so both
+are suppressed while a queue is showing:
+
+- **It does not navigate.** The hop to `/cart` after a successful cart is right
+  normally and forfeits your place here.
+- **It does not click.** A waiting room has buttons of its own, and none of
+  them should be pressed by anything but a person.
+
+The tab reports `queued`, raises a desktop notification, shows a banner, and
+waits. When you are released it picks up on its own — cart, checkout, submit —
+and that path takes seconds, so a several-minute window is ample.
+
+Detection is on wording, not markup: the queue is often a third-party product
+(Queue-it and similar) whose DOM is not the retailer's. A false positive costs
+one tab that waits for you; a false negative costs the drop. It errs toward
+waiting.
+
 ### The order-submission guardrails
 
 Money-spending is gated on all of these, and any failure is terminal rather

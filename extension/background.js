@@ -10,7 +10,7 @@ importScripts('bridge.js');
 
 const LOUD = new Set([
   'in-stock', 'carted', 'challenge', 'dry-run', 'skipped',
-  'ready-to-submit', 'placing-order', 'refused',
+  'ready-to-submit', 'placing-order', 'refused', 'queued',
 ]);
 
 const TITLES = {
@@ -23,6 +23,7 @@ const TITLES = {
   challenge: '⚠️ Bot check hit',
   'dry-run': '🧪 Dry run',
   skipped: '⏭️ Skipped',
+  queued: '⏳ IN A QUEUE — stay on this tab',
   'not-armed': 'Alert only',
 };
 
@@ -46,7 +47,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   });
 
   // Pull the tab to the front so you can intervene or finish up.
-  const PULL_FORWARD = ['carted', 'in-stock', 'ready-to-submit', 'placing-order', 'refused', 'challenge'];
+  const PULL_FORWARD = ['carted', 'in-stock', 'ready-to-submit', 'placing-order', 'refused', 'queued', 'challenge'];
   if (PULL_FORWARD.includes(kind) && sender.tab) {
     chrome.tabs.update(sender.tab.id, { active: true });
     chrome.windows.update(sender.tab.windowId, { focused: true, drawAttention: true });

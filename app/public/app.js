@@ -108,6 +108,7 @@ const STATUS_TEXT = {
   'dry-run': 'dry run hit',
   stopped: 'stopped',
   'not-armed': 'idle',
+  queued: 'in a queue',
   baseline: 'baselined',
   filtered: 'filtered out',
 };

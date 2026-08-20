@@ -319,3 +319,57 @@ test('raising the floor mid-watch re-checks, lowering it resumes', { skip: SKIP 
   assert.ok(kinds(events).includes('skipped'), 'refused under the original floor');
   assert.ok(kinds(events).includes('dry-run'), 'lowering the floor should resume the tab');
 });
+
+// --- Walmart's queue ---------------------------------------------------------
+//
+// A hyped Walmart drop puts you in a virtual queue after Add to cart, then
+// releases you with a few minutes to finish. Navigating away forfeits the
+// place -- and the post-cart hop to /cart, correct in the ordinary case, does
+// exactly that. So does clicking: a waiting room has buttons of its own.
+
+const queueHtml = () => fs.readFileSync(path.join(FIXTURES, 'walmart-queue.html'), 'utf8');
+const WALMART_PDP = 'https://www.walmart.com/ip/thing/1234567890';
+
+test('a queue page is recognised and nothing on it is clicked', { skip: SKIP }, async () => {
+  const { events, clicks } = await drive({
+    html: queueHtml(),
+    url: WALMART_PDP,
+    settings: { ...ARMED, dryRun: false, minPrice: 0 },
+    trackClicks: true,
+  });
+
+  assert.ok(kinds(events).includes('queued'), 'the queue must be reported');
+  assert.ok(!kinds(events).includes('carted'), 'nothing in a waiting room may be clicked');
+  assert.equal(clicks, 0);
+});
+
+test('a queue is not mistaken for a bot check', { skip: SKIP }, async () => {
+  const { events } = await drive({
+    html: queueHtml(), url: WALMART_PDP, settings: ARMED,
+  });
+  // A challenge stop is terminal and needs a human. A queue resolves itself,
+  // so calling it a challenge would abandon a place in line that was fine.
+  assert.ok(!kinds(events).includes('challenge'));
+});
+
+test('a real product page is not mistaken for a queue', { skip: SKIP }, async () => {
+  const { events } = await drive({
+    html: targetHtml(), url: TARGET_URL, settings: ARMED, mutate: ENABLE_BUTTON,
+  });
+  assert.ok(!kinds(events).includes('queued'), 'a PDP must not trip the queue check');
+  assert.ok(kinds(events).includes('dry-run'), 'and it must still work normally');
+});
+
+test('the queue check survives a page that merely mentions high demand', { skip: SKIP }, async () => {
+  // The bound on page length is what separates a waiting room from a PDP whose
+  // copy happens to say "high demand". Pad the product page past it.
+  const padded = targetHtml().replace(
+    '</body>',
+    `<p>Due to high demand please wait for restock.</p><p>${'x'.repeat(4000)}</p></body>`,
+  );
+  const { events } = await drive({
+    html: padded, url: TARGET_URL, settings: ARMED, mutate: ENABLE_BUTTON,
+  });
+  assert.ok(!kinds(events).includes('queued'));
+  assert.ok(kinds(events).includes('dry-run'));
+});
