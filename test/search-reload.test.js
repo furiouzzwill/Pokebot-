@@ -30,6 +30,17 @@ const configJs = SKIP ? '' : fs.readFileSync(path.join(EXT, 'config.js'), 'utf8'
  * five-second minimum a real tab is held to. The floor itself is asserted
  * separately rather than being quietly assumed away here.
  */
+/**
+ * search.js with the challenge backoff shortened. The real one starts at 30
+ * seconds, which is right for a live retailer and far too long for a test.
+ */
+function withBackoff(ms) {
+  const start = searchJs.indexOf('const CHALLENGE_BACKOFF_MS = [');
+  const end = searchJs.indexOf('];', start) + 2;
+  if (start === -1) throw new Error('CHALLENGE_BACKOFF_MS not found in search.js');
+  return searchJs.slice(0, start) + `const CHALLENGE_BACKOFF_MS = [${ms}];` + searchJs.slice(end);
+}
+
 function configWithTinyFloor() {
   return configJs.replace(/const MIN_SEARCH_SECONDS = [^;]+;/, 'const MIN_SEARCH_SECONDS = 0.4;');
 }
@@ -394,6 +405,106 @@ test('an old SKU resurfacing on page one is never reported', { skip: SKIP }, asy
     assert.ok(
       reported.includes('1013500000'),
       'an id above the floor is genuinely new and must still be reported',
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+// --- Bot checks on a search page ---------------------------------------------
+//
+// From a live 3am run: both search tabs were challenged at 03:00:05, stop()
+// tore down their timers and observers, and nothing watched anything until a
+// tab happened to be recreated thirteen minutes later. The window was open the
+// whole time. Stopping is right on a product page -- carting into a challenge
+// is the thing this refuses to do -- but a results page is read-only and the
+// challenge is usually transient.
+
+const challengeHtml = () =>
+  fs.readFileSync(path.join(__dirname, 'fixtures', 'walmart-bot-challenge.html'), 'utf8');
+
+test('a challenged search page retries instead of dying', { skip: SKIP }, async () => {
+  const browser = await chromium.launch(launchOptions());
+  try {
+    const tab = await browser.newPage();
+    let loads = 0;
+
+    await tab.route('**/*', (route) => {
+      if (!route.request().url().startsWith('https://www.target.com/s')) return route.abort();
+      loads += 1;
+      // Challenged on the first two loads, then it clears -- as they do.
+      const body = loads <= 2
+        ? challengeHtml()
+        : page('<a href="/p/the-drop/-/A-99999999">The Drop ETB</a>');
+      return route.fulfill({ status: 200, contentType: 'text/html', body });
+    });
+
+    const messages = [];
+    await tab.exposeFunction('__pokebotReport', (m) => { messages.push(m); });
+    await tab.addInitScript(`
+      ${chromeStub({ searchSeconds: 1, onlyNewListings: false }, { report: true })}
+      window.addEventListener('DOMContentLoaded', () => {
+        ${configWithTinyFloor()}
+        ${withBackoff(400)}
+      });
+    `);
+
+    await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.waitForTimeout(5000);
+
+    assert.ok(
+      loads >= 3,
+      `a challenge must not be terminal; the page loaded only ${loads} time(s)`,
+    );
+    assert.ok(
+      messages.some((m) => m.kind === 'challenge'),
+      'the first bot check should still be reported',
+    );
+    assert.ok(
+      messages.some((m) => m.kind === 'watching' && /cleared/i.test(m.detail || '')),
+      'clearing the challenge should be reported too',
+    );
+
+    const ids = messages
+      .filter((m) => m.kind === 'discovered')
+      .flatMap((m) => m.products.map((p) => p.id));
+    assert.ok(
+      ids.includes('99999999'),
+      'once the challenge clears the watcher must find the drop it exists for',
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a persistent challenge is reported more than once', { skip: SKIP }, async () => {
+  const browser = await chromium.launch(launchOptions());
+  try {
+    const tab = await browser.newPage();
+    await tab.route('**/*', (route) =>
+      route.request().url().startsWith('https://www.target.com/s')
+        ? route.fulfill({ status: 200, contentType: 'text/html', body: challengeHtml() })
+        : route.abort(),
+    );
+
+    const messages = [];
+    await tab.exposeFunction('__pokebotReport', (m) => { messages.push(m); });
+    await tab.addInitScript(`
+      ${chromeStub({ searchSeconds: 1, onlyNewListings: false }, { report: true })}
+      window.addEventListener('DOMContentLoaded', () => {
+        ${configWithTinyFloor()}
+        ${withBackoff(300)}
+      });
+    `);
+
+    await tab.goto(URL_, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await tab.waitForTimeout(4000);
+
+    const challenges = messages.filter((m) => m.kind === 'challenge');
+    assert.ok(challenges.length >= 2, 'a challenge that will not clear needs a person told twice');
+    assert.ok(
+      challenges.some((m) => /needs you/i.test(m.detail || '')),
+      'the follow-up should say plainly that it needs a human',
     );
   } finally {
     await browser.close();

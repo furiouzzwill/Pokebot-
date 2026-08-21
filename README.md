@@ -182,6 +182,26 @@ restock night, buying a pre-order instead of the in-stock item is the wrong
 outcome. Everything downstream is unchanged, so a pre-order still has to clear
 the price floor and cap like any other purchase.
 
+### Bot checks are not fatal to a search page
+
+A challenge on a *product* page stops that tab, and should: carting into a
+challenge is the thing this refuses to do. A search page is different. It is
+read-only, the challenge is usually transient, and stopping means the watcher
+is asleep through the minutes it exists for.
+
+That is not hypothetical. On a live 3am run both search tabs were challenged at
+`03:00:05` — the drop minute — and nothing watched anything until a tab
+happened to be recreated at `03:13`. The window was open the whole time.
+
+A challenged search page now backs off and reloads, at 30s, 60s, 2min then
+4min. The strike count lives in `sessionStorage`, because the retry *is* a
+reload and an in-memory counter would reset every attempt — the backoff would
+never grow and clearing would never be noticed. It alerts on the first strike
+and again once it is clearly stuck, and reports when the challenge clears.
+
+It still never answers a challenge. Backing off and trying again later is what
+a person with a tab open does; solving it is not.
+
 ### Queues
 
 A hyped Walmart drop goes behind a virtual waiting room: Add to cart puts you

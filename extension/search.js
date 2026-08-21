@@ -134,8 +134,46 @@ function markBaselined() {
   }
 }
 
+/**
+ * A bot check on a *search* page is not the end of the run.
+ *
+ * On a product page stopping is right: carting into a challenge is exactly the
+ * thing this tool refuses to do. A results page is read-only, the challenge is
+ * usually transient, and dying on it means the watcher is asleep through the
+ * minutes it exists for -- which is what happened on a live 3am drop, both
+ * tabs challenged at 03:00:05 and silent until 03:13.
+ *
+ * So: back off and keep trying. Reloading straight into a challenge just
+ * re-triggers it, hence the growing delay, and the interval is deliberately
+ * slower than the drop-window cadence that provoked it in the first place.
+ */
+const CHALLENGE_BACKOFF_MS = [30000, 60000, 120000, 240000];
+
+// The retry *is* a reload, so the strike count has to outlive the page or the
+// backoff never grows and clearing is never noticed.
+const CHALLENGE_KEY = `pokebot:challenged:${location.pathname}${location.search}`;
+
+function loadStrikes() {
+  try {
+    return Number(sessionStorage.getItem(CHALLENGE_KEY) || '0') || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveStrikes(strikes) {
+  try {
+    if (strikes === 0) sessionStorage.removeItem(CHALLENGE_KEY);
+    else sessionStorage.setItem(CHALLENGE_KEY, String(strikes));
+  } catch {
+    // In-memory for this load only; the retry still happens.
+  }
+}
+
 const state = {
   seen: loadSeen(),
+  challengeStrikes: loadStrikes(),
+  challengeTimer: null,
   settings: null,
   baselineUntil: 0,
   floor: loadFloor(),
@@ -247,19 +285,26 @@ function report(allProducts) {
 
 function tick() {
   if (isChallenge()) {
-    log('bot check on this page; stopping');
-    stop();
+    handleChallenge();
+    return;
+  }
+
+  if (state.challengeStrikes > 0) {
+    log('bot check cleared; watching again');
+    state.challengeStrikes = 0;
+    saveStrikes(0);
+    clearTimeout(state.challengeTimer);
+    state.challengeTimer = null;
     try {
       chrome.runtime.sendMessage({
-        kind: 'challenge',
-        detail: 'Search page hit a bot check. Solve it and reload.',
+        kind: 'watching',
+        detail: 'Bot check cleared -- this search page is being watched again.',
         site: SITE,
         url: location.href,
       });
     } catch {
-      // Nothing more to do.
+      // Console still has it.
     }
-    return;
   }
 
   const found = scrape();
@@ -320,7 +365,49 @@ function finishBaseline() {
 function stop() {
   clearInterval(state.timer);
   clearTimeout(state.reloadTimer);
+  clearTimeout(state.challengeTimer);
   state.observer?.disconnect();
+}
+
+/**
+ * Hold through a bot check and keep trying.
+ *
+ * The poll is left running so a challenge that clears on its own is noticed;
+ * only the re-query is pushed back. Alerts on the first strike and again as it
+ * drags on, because a challenge that will not clear needs a person -- solving
+ * it is not something this will ever attempt.
+ */
+function handleChallenge() {
+  const strike = state.challengeStrikes;
+  state.challengeStrikes = strike + 1;
+  saveStrikes(state.challengeStrikes);
+
+  if (strike === 0 || strike === 3) {
+    log('bot check on this search page; backing off and retrying');
+    try {
+      chrome.runtime.sendMessage({
+        kind: 'challenge',
+        detail:
+          strike === 0
+            ? 'Search page hit a bot check. Backing off and retrying -- solve it in the '
+              + 'browser to clear it immediately.'
+            : 'Search page is still bot-checked after several retries. It needs you.',
+        site: SITE,
+        url: location.href,
+      });
+    } catch {
+      // Console still has it.
+    }
+  }
+
+  // One retry in flight at a time.
+  if (state.challengeTimer) return;
+  const delay = CHALLENGE_BACKOFF_MS[Math.min(strike, CHALLENGE_BACKOFF_MS.length - 1)];
+  clearTimeout(state.reloadTimer);
+  state.challengeTimer = setTimeout(() => {
+    state.challengeTimer = null;
+    location.reload();
+  }, delay);
 }
 
 function scheduleReload() {

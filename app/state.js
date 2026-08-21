@@ -138,7 +138,11 @@ const DEFAULT_SITE = {
   dropTime: '21:00',
   dropTimeZone: 'America/New_York',
   dropLeadMinutes: 15,
-  dropTrailMinutes: 30,
+  // Generous by default. A restock is over in ninety seconds, but a pre-order
+  // drop trickles: listings appeared thirteen minutes late on a live 3am run,
+  // and closing at +30 meant standing there watching nothing. Staying open
+  // costs a re-query every ten seconds and nothing else.
+  dropTrailMinutes: 90,
   searchSeconds: 90,
   dropSearchSeconds: 10,
   autoAddDuringDrop: false,
@@ -159,6 +163,8 @@ function defaultSites() {
       ...DEFAULT_SITE,
       dropDays: ['tuesday'],
       dropTime: '03:00',
+      // Pre-orders trickle in for longer than a restock does.
+      dropTrailMinutes: 120,
       // The reason this profile exists.
       allowPreorders: true,
     },
