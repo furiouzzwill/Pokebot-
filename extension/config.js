@@ -24,6 +24,12 @@ const DEFAULTS = {
   // packs a tenth of the price, and a maximum alone cannot tell them apart.
   minPrice: 0,
 
+  // Treat a "Preorder" button as a purchase control. Target's sought-after
+  // drops are pre-orders, and that button does not say "Add to cart", so it is
+  // invisible without this. Off by default: on a restock night a pre-order is
+  // the wrong thing to buy.
+  allowPreorders: false,
+
   // Stop after this many successful carts per tab, so a re-render loop can't
   // cart repeatedly.
   maxCarts: 1,
@@ -85,10 +91,21 @@ const DEFAULTS = {
 // check during the one minute that matters costs the whole drop.
 const MIN_SEARCH_SECONDS = 5;
 
-async function loadSettings() {
+/**
+ * Settings for one retailer.
+ *
+ * The dashboard keeps a profile per retailer, because a Walmart Wednesday and
+ * a Target 3am pre-order night differ in schedule, price and what counts as a
+ * purchase control. A tab knows which site it is on, so it resolves its own:
+ * defaults, then the global master switches, then that retailer's profile.
+ *
+ * Called with no site -- the standalone popup -- it stops at the globals.
+ */
+async function loadSettings(site) {
   if (typeof chrome === 'undefined' || !chrome.storage) return { ...DEFAULTS };
-  const stored = await chrome.storage.sync.get(DEFAULTS);
-  return { ...DEFAULTS, ...stored };
+  const stored = await chrome.storage.sync.get(null);
+  const profile = (site && stored && stored.sites && stored.sites[site]) || {};
+  return { ...DEFAULTS, ...stored, ...profile };
 }
 
 async function saveSettings(patch) {

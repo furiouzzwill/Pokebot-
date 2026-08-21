@@ -29,6 +29,11 @@ const SELECTORS = {
 };
 
 const CART_TEXT = /^(add to cart|add for shipping|ship it|add to bag)$/i;
+
+// Matched only when allowPreorders is on. Text rather than a selector because
+// a pre-order control is a variant of the buy button, not a separate component
+// with a stable hook of its own.
+const PREORDER_TEXT = /^(pre-?order|pre-?order now|pre-?order item)$/i;
 const CHALLENGE_TEXT = /robot or human|confirm that you'?re human|press & hold|verify you are human|access denied/i;
 
 const state = {
@@ -171,10 +176,12 @@ function findCartButton() {
     document.querySelector('[data-testid="product-details"]') ||
     document.body;
 
+  const allowPreorders = Boolean(state.settings?.allowPreorders);
+
   const candidates = queryAll(config.cart).concat(
     Array.from(document.querySelectorAll('button, input[type="submit"]')).filter((el) => {
       const label = (el.textContent || el.value || el.getAttribute('aria-label') || '').trim();
-      return CART_TEXT.test(label);
+      return CART_TEXT.test(label) || (allowPreorders && PREORDER_TEXT.test(label));
     }),
   );
 
@@ -311,7 +318,7 @@ function check() {
  */
 async function applySettings() {
   const previous = state.settings;
-  const next = await loadSettings();
+  const next = await loadSettings(SITE);
   if (!previous) return;
 
   // The dashboard re-broadcasts the whole settings object on unrelated state
@@ -348,7 +355,7 @@ async function applySettings() {
 }
 
 async function init() {
-  state.settings = await loadSettings();
+  state.settings = await loadSettings(SITE);
 
   report(
     'watching',

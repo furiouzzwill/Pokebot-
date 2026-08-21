@@ -138,9 +138,15 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
    * arithmetic lives in one testable place, and the content scripts only ever
    * see a boolean.
    */
-  function dropState() {
-    const { settings, rules } = state.getState();
-    return dropWindow(new Date(), scheduleFrom(settings, rules));
+  function dropState(site) {
+    const profile = state.getState().sites[site];
+    if (!profile) return { active: false, minutesUntilNext: null };
+    return dropWindow(new Date(), scheduleFrom(profile, profile));
+  }
+
+  /** Every retailer's window, keyed by site, for the dashboard. */
+  function dropStates() {
+    return Object.fromEntries(state.SITE_KEYS.map((site) => [site, dropState(site)]));
   }
 
   /**
@@ -150,21 +156,28 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
    * list becomes chrome.tabs.create() calls in a browser you are logged into,
    * so it is not somewhere to trust whatever ended up in the settings file.
    */
-  function searchTabsFor(drop) {
-    const { settings, rules } = state.getState();
-    if (!drop.active || !settings.openSearchDuringDrop) return [];
+  function searchTabsFor(drops) {
+    const { settings, sites } = state.getState();
+    if (!settings.openSearchDuringDrop) return [];
 
-    const allowed = new Set(['www.walmart.com', 'www.target.com']);
+    // A retailer's pages open only while that retailer's window is open, and
+    // only ever on that retailer's own host: Walmart's Wednesday window has no
+    // business opening Target tabs.
+    const HOSTS = { walmart: 'www.walmart.com', target: 'www.target.com' };
     const urls = [];
-    for (const raw of rules.searchUrls || []) {
-      let parsed;
-      try {
-        parsed = new URL(String(raw).trim());
-      } catch {
-        continue;
+
+    for (const site of state.SITE_KEYS) {
+      if (!drops[site]?.active) continue;
+      for (const raw of sites[site].searchUrls || []) {
+        let parsed;
+        try {
+          parsed = new URL(String(raw).trim());
+        } catch {
+          continue;
+        }
+        if (parsed.protocol !== 'https:' || parsed.hostname !== HOSTS[site]) continue;
+        urls.push(parsed.toString());
       }
-      if (parsed.protocol !== 'https:' || !allowed.has(parsed.hostname)) continue;
-      urls.push(parsed.toString());
     }
     return urls;
   }
@@ -172,19 +185,28 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
   /** Push watchlist + settings to the extension, and full state to dashboards. */
   function syncAll() {
     const snap = state.snapshot();
-    const drop = dropState();
+    const drops = dropStates();
 
-    broadcast({ type: 'state', ...snap, drop }, 'dashboard');
+    broadcast({ type: 'state', ...snap, drops }, 'dashboard');
+
+    // Each profile carries its own dropActive, so a tab resolves the window
+    // state for the site it is actually on rather than a global flag.
+    const sites = Object.fromEntries(
+      state.SITE_KEYS.map((site) => [
+        site,
+        { ...snap.sites[site], dropActive: Boolean(drops[site]?.active) },
+      ]),
+    );
+
     broadcast(
       {
         type: 'sync',
-        // dropActive rides along with settings so the search watcher picks it
-        // up through the same storage.onChanged path as everything else.
-        settings: { ...snap.settings, dropActive: drop.active },
+        settings: snap.settings,
+        sites,
         watchlist: snap.watchlist
           .filter((item) => item.enabled)
           .map(({ id, url, name, site }) => ({ id, url, name, site })),
-        searchTabs: searchTabsFor(drop),
+        searchTabs: searchTabsFor(drops),
       },
       'extension',
     );
@@ -196,25 +218,35 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
    * change is broadcast -- re-syncing every 15s would restart the extension's
    * tabs for no reason.
    */
-  let lastDropActive = null;
-  let autoAddsThisWindow = 0;
+  const lastDropActive = new Map();
+  const autoAddsThisWindow = new Map();
+
   function watchDropWindow() {
-    const { active } = dropState();
-    if (active !== lastDropActive) {
-      const first = lastDropActive === null;
-      lastDropActive = active;
+    let changed = false;
+
+    for (const site of state.SITE_KEYS) {
+      const { active } = dropState(site);
+      const previous = lastDropActive.get(site);
+      if (active === previous) continue;
+
+      const first = previous === undefined;
+      lastDropActive.set(site, active);
       // A fresh budget per window, so last night's spend can't carry over.
-      if (active) autoAddsThisWindow = 0;
+      if (active) autoAddsThisWindow.set(site, 0);
+      changed = true;
+
       if (!first) {
         state.recordEvent({
           kind: active ? 'drop-window-open' : 'drop-window-closed',
+          site,
           detail: active
-            ? 'Drop window open -- search tabs re-querying hard.'
-            : 'Drop window closed -- back to the normal interval.',
+            ? `${site} drop window open -- its search tabs re-querying hard.`
+            : `${site} drop window closed -- back to the normal interval.`,
         });
       }
-      syncAll();
     }
+
+    if (changed) syncAll();
   }
 
   const HANDLERS = {
@@ -246,6 +278,17 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     setSettings(client, message) {
       state.setSettings(message.settings);
       syncAll();
+    },
+
+    setSiteSettings(client, message) {
+      try {
+        state.setSiteSettings(message.site, message.settings);
+        // A schedule edit can open or close a window immediately.
+        watchDropWindow();
+        syncAll();
+      } catch (err) {
+        client.socket.send(JSON.stringify({ type: 'error', message: err.message }));
+      }
     },
 
     setRules(client, message) {
@@ -423,35 +466,41 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     // setting: the whole point of the window is that there is no time to press
     // Watch. Everything downstream is unchanged, so an auto-added item still
     // meets the price cap, the per-order limits and the daily order ledger.
-    const inWindow = dropState().active;
-    const autoAdd = settings.autoAddDiscoveries || (settings.autoAddDuringDrop && inWindow);
-    if (autoAdd) {
-      for (const found of [...state.getState().discoveries]) {
-        if (found.dismissed || found.kind !== 'product' || !found.url) continue;
+    const { sites } = state.getState();
+    for (const found of [...state.getState().discoveries]) {
+      if (found.dismissed || found.kind !== 'product' || !found.url) continue;
+
+      // Which profile applies is decided by the retailer the find is on, not
+      // by whichever one happens to be selected in the dashboard.
+      const profile = sites[found.site];
+      const inWindow = Boolean(profile) && dropState(found.site).active;
+      const autoAdd =
+        settings.autoAddDiscoveries || (profile?.autoAddDuringDrop && inWindow);
+      if (!autoAdd) continue;
 
         // Every auto-added item opens its own pinned tab and carts on its own,
         // because maxCarts is per tab. Unbounded, one loose keyword match fills
         // a cart with a dozen things and the tab count alone earns a bot check.
         // The rest stay in the review queue rather than being thrown away.
-        if (inWindow && autoAddsThisWindow >= settings.maxAutoAddsPerWindow) {
-          state.recordEvent({
-            kind: 'filtered',
-            detail:
-              `Reached ${settings.maxAutoAddsPerWindow} auto-add(s) for this window. `
-              + `"${String(found.title).slice(0, 60)}" is waiting in Discovered.`,
-            url: found.url,
-            site: found.site,
-          });
-          break;
-        }
+      const spent = autoAddsThisWindow.get(found.site) || 0;
+      if (inWindow && spent >= profile.maxAutoAddsPerWindow) {
+        state.recordEvent({
+          kind: 'filtered',
+          detail:
+            `Reached ${profile.maxAutoAddsPerWindow} auto-add(s) for this ${found.site} window. `
+            + `"${String(found.title).slice(0, 60)}" is waiting in Discovered.`,
+          url: found.url,
+          site: found.site,
+        });
+        continue;
+      }
 
-        try {
-          state.addItem({ url: found.url, name: found.title });
-          state.dismissDiscovery(found.key);
-          if (inWindow) autoAddsThisWindow += 1;
-        } catch {
-          // Already on the list, or not a supported URL.
-        }
+      try {
+        state.addItem({ url: found.url, name: found.title });
+        state.dismissDiscovery(found.key);
+        if (inWindow) autoAddsThisWindow.set(found.site, spent + 1);
+      } catch {
+        // Already on the list, or not a supported URL.
       }
     }
     syncAll();
@@ -604,6 +653,7 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     pollReddit, // exposed so tests can drive a round without waiting
     pollDiscord,
     dropState,
+    dropStates,
     watchDropWindow,
     close: () => new Promise((resolve) => {
       clearTimeout(redditTimer);

@@ -149,6 +149,39 @@ that setting changes: raise the cap on something it refused and it re-checks.
 A bot check and an already-placed cart are the exceptions, and stay stopped —
 one needs you, and the other must not be repeated by flipping a switch.
 
+### Per-retailer profiles
+
+Walmart restocks on Wednesday at 9pm. Target's sought-after drops are 3am
+pre-orders on a different day, at different prices. One global schedule cannot
+express both, and rewriting it before every drop is how the wrong number ends
+up live at 3am — so each retailer keeps its own profile, and the dashboard has
+a **Walmart | Target** toggle for which one you are editing.
+
+Per retailer: min/max item price, order total and item ceilings, the pre-order
+toggle, the whole drop schedule (days, time, zone, lead, trail), both re-query
+intervals, auto-add during the window and its budget, and the search pages to
+watch.
+
+Global, because they are master switches rather than strategy: **Armed**,
+**Dry run**, **Auto-checkout**, **Place order**, and **Max orders per day** —
+that last one deliberately, since it is a budget across everything rather than
+one allowance per store.
+
+Both profiles are live at once. A Walmart tab resolves Walmart's profile and a
+Target tab resolves Target's, so a Wednesday-night Walmart window and a
+3am Target window can be armed simultaneously without either touching the
+other's limits. A retailer's search pages open only inside that retailer's
+window, and only ever on that retailer's own host.
+
+### Pre-orders
+
+Target's best drops are pre-orders, and a pre-order button reads `Preorder`,
+not `Add to cart` — so it is invisible to the matcher unless **Buy pre-orders**
+is on for that retailer. It ships on for Target and off for Walmart: on a
+restock night, buying a pre-order instead of the in-stock item is the wrong
+outcome. Everything downstream is unchanged, so a pre-order still has to clear
+the price floor and cap like any other purchase.
+
 ### Queues
 
 A hyped Walmart drop goes behind a virtual waiting room: Add to cart puts you

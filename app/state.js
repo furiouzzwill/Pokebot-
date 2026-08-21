@@ -113,10 +113,63 @@ const DEFAULT_RULES = {
   searchUrls: [],
 };
 
+/**
+ * Per-retailer profile: the hunt.
+ *
+ * Walmart restocks on Wednesday at 9pm; Target's good drops are pre-orders at
+ * 3am on another day entirely, at different prices. One global schedule cannot
+ * express both, and editing it before every drop is how the wrong number ends
+ * up live at 3am. What stays global is the master switches -- armed, dry run,
+ * whether an order may be placed at all, and the daily order budget, which is
+ * a budget across everything rather than per retailer.
+ */
+const DEFAULT_SITE = {
+  minPrice: 0,
+  maxPrice: 100,
+  maxOrderTotal: 150,
+  maxOrderItems: 2,
+
+  // Target's sought-after drops are pre-orders, and a pre-order button says
+  // "Preorder", not "Add to cart" -- so it is invisible unless this is on.
+  // Off by default: on a restock night a pre-order is the wrong thing to buy.
+  allowPreorders: false,
+
+  dropScheduleEnabled: false,
+  dropTime: '21:00',
+  dropTimeZone: 'America/New_York',
+  dropLeadMinutes: 15,
+  dropTrailMinutes: 30,
+  searchSeconds: 90,
+  dropSearchSeconds: 10,
+  autoAddDuringDrop: false,
+  maxAutoAddsPerWindow: 1,
+
+  // Lists live in the profile too, so a retailer's schedule and the pages it
+  // watches travel together.
+  dropDays: ['wednesday'],
+  searchUrls: [],
+};
+
+const SITE_KEYS = ['walmart', 'target'];
+
+function defaultSites() {
+  return {
+    walmart: { ...DEFAULT_SITE, dropDays: ['wednesday'], dropTime: '21:00' },
+    target: {
+      ...DEFAULT_SITE,
+      dropDays: ['tuesday'],
+      dropTime: '03:00',
+      // The reason this profile exists.
+      allowPreorders: true,
+    },
+  };
+}
+
 function emptyState() {
   return {
     settings: { ...DEFAULT_SETTINGS },
     rules: { ...DEFAULT_RULES },
+    sites: defaultSites(),
     watchlist: [],
     history: [],
     discoveries: [],
@@ -129,6 +182,14 @@ function load() {
     return {
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
       rules: { ...DEFAULT_RULES, ...(parsed.rules || {}) },
+      // A state file written before profiles existed has no `sites`; each
+      // retailer falls back to its default rather than to nothing.
+      sites: Object.fromEntries(
+        SITE_KEYS.map((key) => [
+          key,
+          { ...defaultSites()[key], ...((parsed.sites || {})[key] || {}) },
+        ]),
+      ),
       watchlist: Array.isArray(parsed.watchlist) ? parsed.watchlist : [],
       history: Array.isArray(parsed.history) ? parsed.history : [],
       discoveries: Array.isArray(parsed.discoveries) ? parsed.discoveries : [],
@@ -162,6 +223,7 @@ function snapshot() {
   return {
     settings: state.settings,
     rules: state.rules,
+    sites: state.sites,
     watchlist: state.watchlist.map((item) => ({
       ...item,
       status: status.get(item.id) || { kind: 'idle', detail: '', at: null },
@@ -311,6 +373,39 @@ function dismissDiscovery(key) {
   return entry;
 }
 
+/**
+ * Update one retailer's profile.
+ *
+ * Coerces to the shape of the default the same way setSettings does, and for
+ * the same reason: a wall-clock time or a zone name put through Number()
+ * becomes NaN, and NaN persists as null.
+ */
+function setSiteSettings(site, patch) {
+  if (!SITE_KEYS.includes(site)) throw new Error(`Unknown retailer: ${site}`);
+
+  const next = { ...state.sites[site] };
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (!(key in DEFAULT_SITE)) continue;
+
+    const shape = DEFAULT_SITE[key];
+    if (Array.isArray(shape)) {
+      if (!Array.isArray(value)) continue;
+      next[key] = value.map((entry) => String(entry).trim()).filter((entry) => entry !== '');
+    } else if (typeof shape === 'boolean') {
+      next[key] = Boolean(value);
+    } else if (typeof shape === 'number') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) next[key] = parsed;
+    } else {
+      next[key] = String(value);
+    }
+  }
+
+  state.sites = { ...state.sites, [site]: next };
+  persist();
+  return next;
+}
+
 function setRules(patch) {
   const next = { ...state.rules };
   for (const field of ['subreddits', 'keywords', 'excludeKeywords', 'dropDays', 'searchUrls']) {
@@ -330,6 +425,9 @@ module.exports = {
   addDiscovery,
   dismissDiscovery,
   setRules,
+  setSiteSettings,
+  DEFAULT_SITE,
+  SITE_KEYS,
   STATE_FILE,
   getState,
   snapshot,

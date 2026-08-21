@@ -3,23 +3,31 @@
 const BOOLS = [
   'armed', 'dryRun', 'autoCheckout', 'placeOrder',
   'discoveryEnabled', 'autoAddDiscoveries', 'discordAlerts',
-  'dropScheduleEnabled', 'autoAddDuringDrop', 'openSearchDuringDrop',
-  'onlyNewListings',
+  'openSearchDuringDrop', 'onlyNewListings',
 ];
-const NUMS = [
-  'maxPrice', 'minPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
-  'redditIntervalMinutes', 'discordPollSeconds',
+const NUMS = ['maxOrdersPerDay', 'reloadSeconds', 'redditIntervalMinutes', 'discordPollSeconds'];
+const LISTS = ['keywords', 'excludeKeywords', 'subreddits'];
+
+// Per-retailer profile. Ids are prefixed so a global and a per-site field of
+// the same name cannot be confused for one another.
+const SITE_BOOLS = ['allowPreorders', 'dropScheduleEnabled', 'autoAddDuringDrop'];
+const SITE_NUMS = [
+  'minPrice', 'maxPrice', 'maxOrderTotal', 'maxOrderItems',
   'dropLeadMinutes', 'dropTrailMinutes', 'searchSeconds', 'dropSearchSeconds',
   'maxAutoAddsPerWindow',
 ];
-const TEXTS = ['dropTime', 'dropTimeZone'];
-const LISTS = ['keywords', 'excludeKeywords', 'subreddits', 'dropDays', 'searchUrls'];
+const SITE_TEXTS = ['dropTime', 'dropTimeZone'];
+const SITE_LISTS = ['dropDays', 'searchUrls'];
+const SITES = ['walmart', 'target'];
 
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token');
 
 let socket = null;
 let settings = null;
+let sites = null;
+let drops = null;
+let activeSite = 'walmart';
 let suppressSend = false;
 
 function connect() {
@@ -37,7 +45,10 @@ function connect() {
       renderRules(message.rules);
       renderWatchlist(message.watchlist);
       renderDiscoveries(message.discoveries || []);
-      renderDrop(message.drop);
+      sites = message.sites || sites;
+      drops = message.drops || drops;
+      renderSite();
+      renderDrop();
       renderLog(message.history);
     } else if (message.type === 'event') {
       appendLog(message.entry);
@@ -69,7 +80,6 @@ function renderSettings(next) {
   suppressSend = true;
   for (const key of BOOLS) $(key).checked = Boolean(next[key]);
   for (const key of NUMS) $(key).value = next[key];
-  for (const key of TEXTS) $(key).value = next[key] ?? '';
   suppressSend = false;
 
   // placeOrder can't fire without autoCheckout, so don't let it look armed.
@@ -83,7 +93,7 @@ function renderSettings(next) {
     pill.textContent = 'dry run';
     pill.className = 'pill';
   } else if (next.placeOrder) {
-    pill.textContent = `LIVE — places orders ≤ $${next.maxOrderTotal}`;
+    pill.textContent = 'LIVE — places orders';
     pill.className = 'pill live';
   } else if (next.autoCheckout) {
     pill.textContent = 'live — stops before submit';
@@ -163,30 +173,76 @@ function renderWatchlist(items) {
   $('countLabel').textContent = items.length ? `${active} of ${items.length} active` : '';
 }
 
-/** Countdown to the next scheduled drop, or the fact that one is live now. */
-function renderDrop(drop) {
+/** Fill the retailer panel from the profile currently being edited. */
+function renderSite() {
+  if (!sites || !sites[activeSite]) return;
+  const profile = sites[activeSite];
+
+  suppressSend = true;
+  for (const key of SITE_BOOLS) $(`site_${key}`).checked = Boolean(profile[key]);
+  for (const key of SITE_NUMS) $(`site_${key}`).value = profile[key];
+  for (const key of SITE_TEXTS) $(`site_${key}`).value = profile[key] ?? '';
+  for (const key of SITE_LISTS) {
+    $(`site_${key}`).value = Array.isArray(profile[key]) ? profile[key].join(', ') : '';
+  }
+  suppressSend = false;
+
+  $('sitePill').textContent = activeSite;
+  for (const site of SITES) {
+    const tab = $(`siteTab${site[0].toUpperCase()}${site.slice(1)}`);
+    tab.className = site === activeSite ? 'site-tab on' : 'site-tab';
+  }
+}
+
+function pushSiteSettings() {
+  if (suppressSend) return;
+  const patch = {};
+  for (const key of SITE_BOOLS) patch[key] = $(`site_${key}`).checked;
+  for (const key of SITE_NUMS) {
+    const value = Number.parseFloat($(`site_${key}`).value);
+    if (Number.isFinite(value) && value >= 0) patch[key] = value;
+  }
+  for (const key of SITE_TEXTS) {
+    const value = $(`site_${key}`).value.trim();
+    if (value !== '') patch[key] = value;
+  }
+  for (const key of SITE_LISTS) {
+    patch[key] = $(`site_${key}`).value.split(',').map((v) => v.trim()).filter(Boolean);
+  }
+  send({ type: 'setSiteSettings', site: activeSite, settings: patch });
+}
+
+/** Countdown for the retailer being edited, and a header pill for any of them. */
+function renderDrop() {
   const pill = $('dropPill');
   const hint = $('dropHint');
-  if (!pill || !hint) return;
+  if (!pill || !hint || !drops) return;
 
-  if (!drop || drop.minutesUntilNext === null) {
-    pill.style.display = 'none';
-    hint.textContent = settings?.dropScheduleEnabled
-      ? 'Set a day and a time to schedule a drop window.'
-      : 'Off — search tabs re-query at the normal interval all week.';
-    return;
-  }
-
-  pill.style.display = '';
-  if (drop.active) {
-    pill.textContent = 'DROP WINDOW OPEN';
+  // The header reflects whichever retailer is live, not just the selected one.
+  const liveSite = SITES.find((site) => drops[site]?.active);
+  if (liveSite) {
+    pill.style.display = '';
+    pill.textContent = `${liveSite.toUpperCase()} WINDOW OPEN`;
     pill.className = 'pill live';
-    hint.textContent = `Search tabs re-querying about every ${settings?.dropSearchSeconds ?? 10}s.`;
+  } else {
+    pill.style.display = 'none';
+  }
+
+  const drop = drops[activeSite];
+  if (!drop || drop.minutesUntilNext === null) {
+    hint.textContent = sites?.[activeSite]?.dropScheduleEnabled
+      ? `Set a day and a time to schedule ${activeSite}'s window.`
+      : `Off — ${activeSite} re-queries at the normal interval all week.`;
     return;
   }
 
-  pill.textContent = 'scheduled';
-  pill.className = 'pill';
+  if (drop.active) {
+    hint.textContent =
+      `${activeSite} window open — re-querying about every `
+      + `${sites?.[activeSite]?.dropSearchSeconds ?? 10}s.`;
+    return;
+  }
+
   const minutes = drop.minutesUntilNext;
   const days = Math.floor(minutes / (60 * 24));
   const hours = Math.floor((minutes % (60 * 24)) / 60);
@@ -195,7 +251,9 @@ function renderDrop(drop) {
   if (days) parts.push(`${days}d`);
   if (days || hours) parts.push(`${hours}h`);
   parts.push(`${mins}m`);
-  hint.textContent = `Next window opens in ${parts.join(' ')} (${settings?.dropLeadMinutes ?? 10} min before the drop).`;
+  hint.textContent =
+    `${activeSite}'s next window opens in ${parts.join(' ')} `
+    + `(${sites?.[activeSite]?.dropLeadMinutes ?? 15} min before the drop).`;
 }
 
 function renderRules(rules) {
@@ -311,15 +369,23 @@ function pushSettings() {
     const value = Number.parseFloat($(key).value);
     if (Number.isFinite(value) && value >= 0) patch[key] = value;
   }
-  for (const key of TEXTS) {
-    const value = $(key).value.trim();
-    if (value !== '') patch[key] = value;
-  }
   send({ type: 'setSettings', settings: patch });
 }
 
-for (const key of [...BOOLS, ...NUMS, ...TEXTS]) {
+for (const key of [...BOOLS, ...NUMS]) {
   $(key).addEventListener('change', pushSettings);
+}
+
+for (const key of [...SITE_BOOLS, ...SITE_NUMS, ...SITE_TEXTS, ...SITE_LISTS]) {
+  $(`site_${key}`).addEventListener('change', pushSiteSettings);
+}
+
+for (const site of SITES) {
+  $(`siteTab${site[0].toUpperCase()}${site.slice(1)}`).addEventListener('click', () => {
+    activeSite = site;
+    renderSite();
+    renderDrop();
+  });
 }
 
 for (const key of LISTS) {

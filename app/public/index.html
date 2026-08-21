@@ -58,13 +58,15 @@
       <input type="checkbox" id="placeOrder">
     </div>
 
-    <div class="ctl num"><label for="maxPrice">Max item price ($)</label><input type="number" id="maxPrice" min="1"></div>
-    <div class="ctl num"><label for="minPrice">Min item price ($)</label><input type="number" id="minPrice" min="0"></div>
-    <div class="ctl num"><label for="maxOrderTotal">Max order total ($)</label><input type="number" id="maxOrderTotal" min="1"></div>
-    <div class="ctl num"><label for="maxOrderItems">Max items per order</label><input type="number" id="maxOrderItems" min="1"></div>
     <div class="ctl num"><label for="maxOrdersPerDay">Max orders per day</label><input type="number" id="maxOrdersPerDay" min="1"></div>
     <div class="ctl num"><label for="reloadSeconds">Reload tabs every (s)</label><input type="number" id="reloadSeconds" min="0" step="5"></div>
 
+    <p class="note">
+      These are the master switches, and they apply everywhere. Prices,
+      schedules and search pages live per retailer in the panel below — the
+      daily order budget is deliberately global, because it is a budget across
+      everything rather than one per store.
+    </p>
     <p class="note">
       Never solves CAPTCHAs and never handles card details — checkout uses the
       payment method saved in your retailer account. A bot check stops the run
@@ -82,6 +84,71 @@
       Target search page you have open. Nothing here is watched until you add it.
     </p>
     <ul id="discoveries" class="items"></ul>
+  </section>
+
+<section class="panel">
+    <div class="panel-head">
+      <h2>Retailer</h2>
+      <span id="sitePill" class="pill">walmart</span>
+    </div>
+
+    <div class="ctl">
+      <label><strong>Editing</strong><span class="sub">each retailer keeps its own profile</span></label>
+      <span>
+        <button type="button" id="siteTabWalmart" class="site-tab">Walmart</button>
+        <button type="button" id="siteTabTarget" class="site-tab">Target</button>
+      </span>
+    </div>
+
+    <div class="ctl num"><label for="site_minPrice">Min item price ($)</label><input type="number" id="site_minPrice" min="0"></div>
+    <div class="ctl num"><label for="site_maxPrice">Max item price ($)</label><input type="number" id="site_maxPrice" min="1"></div>
+    <div class="ctl num"><label for="site_maxOrderTotal">Max order total ($)</label><input type="number" id="site_maxOrderTotal" min="1"></div>
+    <div class="ctl num"><label for="site_maxOrderItems">Max items per order</label><input type="number" id="site_maxOrderItems" min="1"></div>
+
+    <div class="ctl">
+      <label for="site_allowPreorders"><strong>Buy pre-orders</strong><span class="sub">a "Preorder" button counts as buy</span></label>
+      <input type="checkbox" id="site_allowPreorders">
+    </div>
+
+    <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+
+    <div class="ctl">
+      <label for="site_dropScheduleEnabled"><strong>Scheduled drop window</strong><span class="sub">re-query hard at a set time</span></label>
+      <input type="checkbox" id="site_dropScheduleEnabled">
+    </div>
+
+    <div class="field">
+      <label for="site_dropDays">Drop days</label>
+      <input type="text" id="site_dropDays" placeholder="wednesday">
+      <p class="hint">Weekday names, comma separated. Use the weekday the drop <em>time</em> falls on — 3am tonight is tomorrow.</p>
+    </div>
+
+    <div class="ctl num"><label for="site_dropTime">Drop time (24h)</label><input type="text" id="site_dropTime" placeholder="21:00" size="5"></div>
+
+    <div class="field">
+      <label for="site_dropTimeZone">Timezone</label>
+      <input type="text" id="site_dropTimeZone" placeholder="America/New_York">
+      <p class="hint">An IANA name, not <code>EST</code>.</p>
+    </div>
+
+    <div class="ctl num"><label for="site_dropLeadMinutes">Open window early (min)</label><input type="number" id="site_dropLeadMinutes" min="0"></div>
+    <div class="ctl num"><label for="site_dropTrailMinutes">Keep it open after (min)</label><input type="number" id="site_dropTrailMinutes" min="0"></div>
+    <div class="ctl num"><label for="site_searchSeconds">Re-query search every (s)</label><input type="number" id="site_searchSeconds" min="5"></div>
+    <div class="ctl num"><label for="site_dropSearchSeconds">…and in the window (s)</label><input type="number" id="site_dropSearchSeconds" min="5"></div>
+
+    <div class="ctl">
+      <label for="site_autoAddDuringDrop"><strong>Auto-add during the window</strong><span class="sub">only while it's open</span></label>
+      <input type="checkbox" id="site_autoAddDuringDrop">
+    </div>
+    <div class="ctl num"><label for="site_maxAutoAddsPerWindow">Max auto-adds per window</label><input type="number" id="site_maxAutoAddsPerWindow" min="1"></div>
+
+    <div class="field">
+      <label for="site_searchUrls">Search pages to watch</label>
+      <input type="text" id="site_searchUrls" placeholder="https://www.walmart.com/browse/...?sort=new">
+      <p class="hint">This retailer's search, browse or category URLs, comma separated. Sorted newest.</p>
+    </div>
+
+    <p class="hint" id="dropHint"></p>
   </section>
 
   <section class="panel">
@@ -126,58 +193,6 @@
       settings apply to it. Leave it off unless you trust your keywords.
     </p>
 
-    <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
-
-    <div class="ctl">
-      <label for="dropScheduleEnabled"><strong>Scheduled drop window</strong><span class="sub">re-query hard at a set time</span></label>
-      <input type="checkbox" id="dropScheduleEnabled">
-    </div>
-
-    <div class="field">
-      <label for="dropDays">Drop days</label>
-      <input type="text" id="dropDays" placeholder="wednesday">
-      <p class="hint">Weekday names, comma separated.</p>
-    </div>
-
-    <div class="ctl num">
-      <label for="dropTime">Drop time (24h)</label>
-      <input type="text" id="dropTime" placeholder="21:00" size="5">
-    </div>
-
-    <div class="field">
-      <label for="dropTimeZone">Timezone</label>
-      <input type="text" id="dropTimeZone" placeholder="America/New_York">
-      <p class="hint">
-        An IANA name, not <code>EST</code>. <code>America/New_York</code> is
-        Eastern all year and moves itself for daylight saving.
-      </p>
-    </div>
-
-    <div class="ctl num">
-      <label for="dropLeadMinutes">Open window early (min)</label>
-      <input type="number" id="dropLeadMinutes" min="0">
-    </div>
-    <div class="ctl num">
-      <label for="dropTrailMinutes">Keep it open after (min)</label>
-      <input type="number" id="dropTrailMinutes" min="0">
-    </div>
-    <div class="ctl num">
-      <label for="searchSeconds">Re-query search every (s)</label>
-      <input type="number" id="searchSeconds" min="5">
-    </div>
-    <div class="ctl num">
-      <label for="dropSearchSeconds">…and in the window (s)</label>
-      <input type="number" id="dropSearchSeconds" min="5">
-    </div>
-
-    <div class="ctl">
-      <label for="autoAddDuringDrop"><strong>Auto-add during the window</strong><span class="sub">only while it's open</span></label>
-      <input type="checkbox" id="autoAddDuringDrop">
-    </div>
-    <div class="ctl num">
-      <label for="maxAutoAddsPerWindow">Max auto-adds per window</label>
-      <input type="number" id="maxAutoAddsPerWindow" min="1">
-    </div>
     <div class="ctl">
       <label for="openSearchDuringDrop"><strong>Open the search tabs itself</strong><span class="sub">and close them after</span></label>
       <input type="checkbox" id="openSearchDuringDrop">
@@ -186,25 +201,6 @@
       <label for="onlyNewListings"><strong>Only brand-new listings</strong><span class="sub">ignore what's already on the page</span></label>
       <input type="checkbox" id="onlyNewListings">
     </div>
-
-    <div class="field">
-      <label for="searchUrls">Search pages to watch</label>
-      <input type="text" id="searchUrls" placeholder="https://www.walmart.com/browse/...?sort=new">
-      <p class="hint">
-        Walmart or Target search, browse or category URLs, comma separated.
-        Sort by newest. Opened when the window opens, closed when it shuts.
-      </p>
-    </div>
-
-    <p class="hint" id="dropHint"></p>
-
-    <p class="note">
-      A drop page usually doesn't exist until minutes beforehand, so keep a
-      Walmart or Target category tab open — <strong>sorted newest first</strong>,
-      not a plain search. Relevance ranking buries a brand new SKU.
-      Below 5s the re-query stops looking like someone with a tab open, and a
-      bot check during the one minute that matters costs you the drop.
-    </p>
 
     <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
 

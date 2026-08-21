@@ -373,3 +373,53 @@ test('the queue check survives a page that merely mentions high demand', { skip:
   assert.ok(!kinds(events).includes('queued'));
   assert.ok(kinds(events).includes('dry-run'));
 });
+
+// --- Pre-orders --------------------------------------------------------------
+//
+// Target's sought-after drops are pre-orders, and that button says "Preorder",
+// not "Add to cart" -- so it is invisible to the matcher unless the retailer's
+// profile turns it on. Off is the right default: on a restock night buying a
+// pre-order instead of the in-stock item is the wrong outcome.
+
+const preorderHtml = () => fs.readFileSync(path.join(FIXTURES, 'target-preorder.html'), 'utf8');
+
+test('a preorder button is ignored unless the profile allows it', { skip: SKIP }, async () => {
+  const { events, clicks } = await drive({
+    html: preorderHtml(),
+    url: TARGET_URL,
+    settings: { ...ARMED, dryRun: false, allowPreorders: false },
+    trackClicks: false,
+  });
+  assert.ok(!kinds(events).includes('carted'), 'preorders are off, so nothing should cart');
+  assert.ok(!kinds(events).includes('in-stock'));
+});
+
+test('a preorder is bought when the profile allows it', { skip: SKIP }, async () => {
+  const { events } = await drive({
+    html: preorderHtml(),
+    url: TARGET_URL,
+    settings: { ...ARMED, dryRun: false, allowPreorders: true },
+  });
+  assert.ok(kinds(events).includes('in-stock'), 'the preorder button is a purchase control');
+  assert.ok(kinds(events).includes('carted'));
+});
+
+test('preorder price guards apply the same as any other buy', { skip: SKIP }, async () => {
+  const { events } = await drive({
+    html: preorderHtml(),
+    url: TARGET_URL,
+    settings: { ...ARMED, dryRun: false, allowPreorders: true, minPrice: 80 },
+  });
+  assert.ok(kinds(events).includes('skipped'), '$59.99 is under an $80 floor');
+  assert.ok(!kinds(events).includes('carted'));
+});
+
+test('turning preorders on mid-watch picks the button up', { skip: SKIP }, async () => {
+  const { events } = await drive({
+    html: preorderHtml(),
+    url: TARGET_URL,
+    settings: { ...ARMED, allowPreorders: false },
+    settingsChange: { allowPreorders: true },
+  });
+  assert.ok(kinds(events).includes('dry-run'), 'the live settings path should re-examine it');
+});

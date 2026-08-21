@@ -304,7 +304,7 @@ function tick() {
 
 async function init() {
   if (PAGE === 'other') return;
-  state.settings = await loadSettings();
+  state.settings = await loadSettings(SITE);
 
   if (!state.settings.armed) {
     report('not-armed', 'Checkout automation is off (extension not armed).');

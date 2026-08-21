@@ -218,326 +218,233 @@ test('refuses to serve files outside the public directory', async () => {
   assert.ok(res.status === 403 || res.status === 404, `got ${res.status}`);
 });
 
-// --- Scheduled drop windows --------------------------------------------------
+// --- Per-retailer drop windows -----------------------------------------------
+//
+// Walmart restocks Wednesday at 9pm; Target's good drops are 3am pre-orders on
+// another day. One global schedule cannot express both, so each retailer keeps
+// its own profile and they must not reach into each other.
 
-test('the extension is told whether a drop window is open', async () => {
+/** A profile whose window is open all day, for tests that need one live. */
+const ALWAYS_OPEN = {
+  dropScheduleEnabled: true,
+  dropTime: '00:00',
+  dropLeadMinutes: 0,
+  dropTrailMinutes: 24 * 60,
+  dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+};
+
+test('each retailer gets its own profile in the sync', async () => {
   const extension = client('extension');
-  await extension.ready;
+  const dash = client('dashboard');
+  await Promise.all([extension.ready, dash.ready]);
 
-  // A schedule that is always open: every weekday, and a trail long enough to
-  // cover the whole day whatever time the suite happens to run.
-  const dashboard = client('dashboard');
-  await dashboard.ready;
-  dashboard.send({
-    type: 'setRules',
-    rules: { dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] },
+  dash.send({
+    type: 'setSiteSettings',
+    site: 'walmart',
+    settings: { ...ALWAYS_OPEN, dropSearchSeconds: 10, maxPrice: 75 },
   });
-  dashboard.send({
-    type: 'setSettings',
+  dash.send({
+    type: 'setSiteSettings',
+    site: 'target',
     settings: {
       dropScheduleEnabled: true,
-      dropTime: '00:00',
-      dropLeadMinutes: 0,
-      dropTrailMinutes: 24 * 60,
-      dropSearchSeconds: 10,
-    },
-  });
-
-  const sync = await extension.next(
-    (m) => m.type === 'sync' && m.settings?.dropActive === true,
-  );
-  assert.strictEqual(sync.settings.dropSearchSeconds, 10);
-
-  extension.ws.close();
-  dashboard.ws.close();
-});
-
-test('a schedule that is not due leaves the window shut', async () => {
-  const extension = client('extension');
-  await extension.ready;
-  const dashboard = client('dashboard');
-  await dashboard.ready;
-
-  // A one-minute window at a fixed time cannot be open for more than a minute
-  // a day, so treat an unlucky collision as the flake it would be.
-  dashboard.send({ type: 'setRules', rules: { dropDays: ['wednesday'] } });
-  dashboard.send({
-    type: 'setSettings',
-    settings: {
-      dropScheduleEnabled: true,
-      dropTime: '03:17',
-      dropTimeZone: 'America/New_York',
+      dropTime: '03:00',
+      dropDays: ['tuesday'],
       dropLeadMinutes: 0,
       dropTrailMinutes: 0,
+      maxPrice: 120,
+      allowPreorders: true,
     },
   });
 
-  // Match on the new schedule landing, not merely on any sync: the first one
-  // arrives on hello and still carries whatever the previous test configured.
   const sync = await extension.next(
-    (m) => m.type === 'sync' && m.settings?.dropTime === '03:17',
+    (m) => m.type === 'sync' && m.sites?.walmart?.maxPrice === 75 && m.sites?.target?.maxPrice === 120,
   );
+
+  assert.strictEqual(sync.sites.walmart.dropActive, true, 'walmart window should be open');
+  assert.strictEqual(sync.sites.target.allowPreorders, true);
+  assert.strictEqual(
+    sync.sites.walmart.allowPreorders, false,
+    'a Target setting must not leak into the Walmart profile',
+  );
+
+  // Target's one-minute window can only be open for a minute a day; treat an
+  // unlucky collision as the flake it would be.
   const nowET = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(new Date());
-  if (!/Wednesday 03:17/.test(nowET)) {
-    assert.strictEqual(sync.settings.dropActive, false);
+  if (!/Tuesday 03:00/.test(nowET)) {
+    assert.strictEqual(sync.sites.target.dropActive, false);
   }
 
   extension.ws.close();
-  dashboard.ws.close();
+  dash.ws.close();
 });
 
-test('auto-add during a drop does nothing while the window is shut', async () => {
-  const dashboard = client('dashboard');
-  await dashboard.ready;
-
-  dashboard.send({
-    type: 'setSettings',
-    settings: {
-      dropScheduleEnabled: false,
-      autoAddDuringDrop: true,
-      autoAddDiscoveries: false,
-    },
-  });
-  await dashboard.next((m) => m.type === 'state' && m.settings.autoAddDuringDrop === true);
-
-  const before = (await dashboard.next((m) => m.type === 'state')).watchlist.length;
-
-  // Ingest a find the way the search watcher would.
+test("a retailer's search tabs open only in its own window, on its own host", async () => {
   const extension = client('extension');
-  await extension.ready;
-  extension.send({
-    type: 'event',
-    kind: 'discovered',
+  const dash = client('dashboard');
+  await Promise.all([extension.ready, dash.ready]);
+
+  dash.send({
+    type: 'setSiteSettings',
     site: 'walmart',
-    url: 'https://www.walmart.com/search?q=pokemon',
-    products: [{
-      url: 'https://www.walmart.com/ip/pokemon-etb/999888777',
-      id: '999888777',
-      site: 'walmart',
-      title: 'Pokemon Elite Trainer Box',
-    }],
-  });
-
-  const state = await dashboard.next(
-    (m) => m.type === 'state' && (m.discoveries || []).some((d) => d.url?.includes('999888777')),
-  );
-  assert.strictEqual(
-    state.watchlist.length, before,
-    'a closed window must not auto-add, even with autoAddDuringDrop on',
-  );
-
-  extension.ws.close();
-  dashboard.ws.close();
-});
-
-test('search tabs are sent only while the window is open, and only for retailers', async () => {
-  const extension = client('extension');
-  await extension.ready;
-  const dashboard = client('dashboard');
-  await dashboard.ready;
-
-  dashboard.send({
-    type: 'setRules',
-    rules: {
-      dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+    settings: {
+      ...ALWAYS_OPEN,
       searchUrls: [
         'https://www.walmart.com/browse/pokemon?sort=new',
-        'https://evil.example.com/steal',   // wrong host
-        'http://www.walmart.com/browse/x',  // not https
-        'not a url at all',
+        'https://www.target.com/s?searchTerm=pokemon',  // wrong host for this profile
+        'https://evil.example.com/steal',
+        'http://www.walmart.com/browse/x',              // not https
       ],
     },
   });
-  dashboard.send({
-    type: 'setSettings',
+  dash.send({
+    type: 'setSiteSettings',
+    site: 'target',
     settings: {
-      dropScheduleEnabled: true,
-      dropTime: '00:00',
-      dropLeadMinutes: 0,
-      dropTrailMinutes: 24 * 60,
-      openSearchDuringDrop: true,
+      dropScheduleEnabled: false,
+      searchUrls: ['https://www.target.com/s?searchTerm=pokemon'],
     },
   });
 
-  const open = await extension.next((m) => m.type === 'sync' && m.settings?.dropActive === true);
+  const open = await extension.next(
+    (m) => m.type === 'sync' && (m.searchTabs || []).length > 0,
+  );
   assert.deepStrictEqual(
     open.searchTabs,
     ['https://www.walmart.com/browse/pokemon?sort=new'],
-    'only an https retailer URL may become a tab in your logged-in browser',
+    'only https URLs on the profile\'s own retailer may become tabs',
   );
 
-  // Closing the window must retract them, so the tabs get closed again.
-  dashboard.send({ type: 'setSettings', settings: { dropScheduleEnabled: false } });
+  dash.send({ type: 'setSiteSettings', site: 'walmart', settings: { dropScheduleEnabled: false } });
   const shut = await extension.next(
-    (m) => m.type === 'sync' && m.settings?.dropScheduleEnabled === false,
+    (m) => m.type === 'sync' && m.sites?.walmart?.dropScheduleEnabled === false,
   );
-  assert.deepStrictEqual(shut.searchTabs, []);
+  assert.deepStrictEqual(shut.searchTabs, [], 'a closed window retracts its tabs');
 
   extension.ws.close();
-  dashboard.ws.close();
+  dash.ws.close();
 });
 
-test('an unknown set is auto-added during a window, and merch is rejected', async () => {
-  const dashboard = client('dashboard');
+test('auto-add is gated by the profile of the retailer the find is on', async () => {
+  const dash = client('dashboard');
   const extension = client('extension');
-  await Promise.all([dashboard.ready, extension.ready]);
+  await Promise.all([dash.ready, extension.ready]);
 
-  dashboard.send({
-    type: 'setRules',
-    rules: {
-      dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
-      keywords: ['booster bundle', 'elite trainer box'],
-      excludeKeywords: ['sock', 'plush'],
-    },
+  dash.send({ type: 'setRules', rules: { keywords: ['booster'], excludeKeywords: ['sock'] } });
+  // Walmart's window is open and adds; Target's is shut and must not.
+  dash.send({
+    type: 'setSiteSettings',
+    site: 'walmart',
+    settings: { ...ALWAYS_OPEN, autoAddDuringDrop: true, maxAutoAddsPerWindow: 5 },
   });
-  dashboard.send({
+  dash.send({
+    type: 'setSiteSettings',
+    site: 'target',
+    settings: { dropScheduleEnabled: false, autoAddDuringDrop: true },
+  });
+  dash.send({
     type: 'setSettings',
-    settings: {
-      dropScheduleEnabled: true,
-      dropTime: '00:00',
-      dropLeadMinutes: 0,
-      dropTrailMinutes: 24 * 60,
-      autoAddDuringDrop: true,
-      autoAddDiscoveries: false,
-      discoveryEnabled: true,
-    },
+    settings: { autoAddDiscoveries: false, discoveryEnabled: true },
   });
-  await extension.next((m) => m.type === 'sync' && m.settings?.dropActive === true);
+  await extension.next((m) => m.type === 'sync' && m.sites?.walmart?.maxAutoAddsPerWindow === 5);
+  resetWindowBudget();
 
-  // A set name nothing in the config has ever seen, next to merchandise.
   extension.send({
     type: 'event',
     kind: 'discovered',
     site: 'walmart',
-    url: 'https://www.walmart.com/browse/pokemon',
-    products: [
-      {
-        url: 'https://www.walmart.com/ip/unknown-set-bundle/700000001',
-        id: '700000001',
-        site: 'walmart',
-        title: 'Pokemon TCG: Utterly Unheard Of Set Booster Bundle (6 Packs)',
-      },
-      {
-        url: 'https://www.walmart.com/ip/pikachu-socks/700000002',
-        id: '700000002',
-        site: 'walmart',
-        title: 'Pokemon Pikachu Crew Socks Booster Bundle 2-Pack',
-      },
-    ],
+    products: [{
+      url: 'https://www.walmart.com/ip/wm-booster/800000001',
+      id: '800000001', site: 'walmart', title: 'Pokemon Booster Bundle',
+    }],
+  });
+  extension.send({
+    type: 'event',
+    kind: 'discovered',
+    site: 'target',
+    products: [{
+      url: 'https://www.target.com/p/tgt-booster/-/A-800000002',
+      id: '800000002', site: 'target', title: 'Pokemon Booster Bundle',
+    }],
   });
 
-  // The unknown set reaches the watchlist with no human step.
-  const state = await dashboard.next(
-    (m) => m.type === 'state' && m.watchlist.some((i) => i.url.includes('700000001')),
+  const state = await dash.next(
+    (m) => m.type === 'state' && m.watchlist.some((i) => i.url.includes('800000001')),
   );
   assert.ok(
-    !state.watchlist.some((i) => i.url.includes('700000002')),
-    'socks matched a keyword and must have been excluded before auto-add',
+    !state.watchlist.some((i) => i.url.includes('800000002')),
+    "Target's window is shut, so its find must stay in review",
   );
 
-  // And the extension is told to open a tab for it, which is what carts.
-  const sync = await extension.next(
-    (m) => m.type === 'sync' && m.watchlist.some((i) => i.url.includes('700000001')),
-  );
-  assert.ok(sync.watchlist.some((i) => i.url.includes('700000001')));
-
-  dashboard.ws.close();
+  dash.ws.close();
   extension.ws.close();
 });
 
-test('a drop window will not auto-add more than its budget', async () => {
-  const dashboard = client('dashboard');
+test('the auto-add budget is per retailer', async () => {
+  const dash = client('dashboard');
   const extension = client('extension');
-  await Promise.all([dashboard.ready, extension.ready]);
+  await Promise.all([dash.ready, extension.ready]);
 
-  dashboard.send({
-    type: 'setRules',
-    rules: {
-      dropDays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
-      keywords: ['booster'],
-      excludeKeywords: [],
-    },
-  });
-
-  // Close and reopen the window so the budget resets, the way a real night
-  // starts. The counter is per window, not per process.
-  dashboard.send({ type: 'setSettings', settings: { dropScheduleEnabled: false } });
-  await dashboard.next((m) => m.type === 'state' && m.settings.dropScheduleEnabled === false);
-  // Register the closed state, so re-opening counts as a transition. The
-  // budget resets on the edge, not on every tick.
+  dash.send({ type: 'setRules', rules: { keywords: ['booster'], excludeKeywords: [] } });
+  dash.send({ type: 'setSiteSettings', site: 'walmart', settings: { dropScheduleEnabled: false } });
+  await dash.next((m) => m.type === 'state' && m.sites.walmart.dropScheduleEnabled === false);
   resetWindowBudget();
 
-  dashboard.send({
-    type: 'setSettings',
-    settings: {
-      dropScheduleEnabled: true,
-      dropTime: '00:00',
-      dropLeadMinutes: 0,
-      dropTrailMinutes: 24 * 60,
-      autoAddDuringDrop: true,
-      autoAddDiscoveries: false,
-      discoveryEnabled: true,
-      maxAutoAddsPerWindow: 2,
-    },
+  dash.send({
+    type: 'setSiteSettings',
+    site: 'walmart',
+    settings: { ...ALWAYS_OPEN, autoAddDuringDrop: true, maxAutoAddsPerWindow: 2 },
   });
-  await extension.next((m) => m.type === 'sync' && m.settings?.maxAutoAddsPerWindow === 2);
+  await extension.next((m) => m.type === 'sync' && m.sites?.walmart?.maxAutoAddsPerWindow === 2);
 
-  // Start from a clean slate: earlier tests leave watchlist rows and
-  // undismissed finds behind, and those would spend this window's budget
-  // before any of this test's products are reached.
-  const dirty = await dashboard.next((m) => m.type === 'state');
-  for (const item of dirty.watchlist) dashboard.send({ type: 'removeItem', id: item.id });
+  // Clear anything earlier tests left behind, then open the window cleanly.
+  const dirty = await dash.next((m) => m.type === 'state');
+  for (const item of dirty.watchlist) dash.send({ type: 'removeItem', id: item.id });
   for (const found of dirty.discoveries || []) {
-    dashboard.send({ type: 'dismissDiscovery', key: found.key });
+    dash.send({ type: 'dismissDiscovery', key: found.key });
   }
-  const clean = await dashboard.next(
+  const clean = await dash.next(
     (m) => m.type === 'state'
       && m.watchlist.length === 0
       && !(m.discoveries || []).some((d) => !d.dismissed),
   );
   const before = clean.watchlist.length;
-
-  // Reset the budget last, so nothing above can spend it.
   resetWindowBudget();
 
-  // Five matching finds in one batch, as a churning results page produces.
   extension.send({
     type: 'event',
     kind: 'discovered',
-    site: 'target',
-    url: 'https://www.target.com/s?searchTerm=pokemon',
+    site: 'walmart',
     products: [1, 2, 3, 4, 5].map((n) => ({
-      url: `https://www.target.com/p/booster-${n}/-/A-102000000${n}`,
-      id: `102000000${n}`,
-      site: 'target',
-      title: `Zubatty Booster Pack ${n}`,
+      url: `https://www.walmart.com/ip/zubatty-${n}/80100000${n}`,
+      id: `80100000${n}`, site: 'walmart', title: `Zubatty Booster Pack ${n}`,
     })),
   });
 
-  // recordEvent writes history; the dashboard sees it in the next state push,
-  // not as a live 'event' message.
-  // Match this test's own products: history accumulates across the file, so a
-  // cap logged by an earlier test would otherwise satisfy this instantly.
-  const state = await dashboard.next(
+  const state = await dash.next(
     (m) => m.type === 'state'
-      && (m.history || []).some((e) => /Reached \d+ auto-add.*Zubatty/.test(e.detail || '')),
+      && (m.history || []).some((e) => /Reached \d+ auto-add.*walmart.*Zubatty/.test(e.detail || '')),
   );
 
   const added = state.watchlist.length - before;
   assert.ok(added > 0, 'the budget should have let something through');
-  assert.ok(
-    added <= 2,
-    `the window budget is 2, but ${added} items reached the watchlist -- each one `
-    + 'opens a tab and carts, which is what filled a cart with thirteen things',
-  );
-  // The rest are held for review, not discarded.
+  assert.ok(added <= 2, `budget is 2 but ${added} items reached the watchlist`);
   assert.ok(
     (state.discoveries || []).some((d) => !d.dismissed && /Zubatty/.test(d.title || '')),
     'blocked finds must stay in the review queue',
   );
 
-  dashboard.ws.close();
+  dash.ws.close();
   extension.ws.close();
+});
+
+test('an unknown retailer is rejected rather than silently ignored', async () => {
+  const dash = client('dashboard');
+  await dash.ready;
+  dash.send({ type: 'setSiteSettings', site: 'bestbuy', settings: { maxPrice: 10 } });
+  const error = await dash.next((m) => m.type === 'error');
+  assert.match(error.message, /Unknown retailer/);
+  dash.close();
 });

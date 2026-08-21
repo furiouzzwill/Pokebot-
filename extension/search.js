@@ -351,7 +351,7 @@ function scheduleReload() {
  */
 async function applySettings() {
   const previous = state.settings;
-  state.settings = await loadSettings();
+  state.settings = await loadSettings(SITE);
   if (!previous) return;
 
   if (reloadSeconds(state.settings) !== reloadSeconds(previous)) {
@@ -364,7 +364,7 @@ async function applySettings() {
 }
 
 async function start() {
-  state.settings = await loadSettings();
+  state.settings = await loadSettings(SITE);
 
   if (state.settings.onlyNewListings && !alreadyBaselined()) {
     state.baselineUntil = Date.now() + BASELINE_MS;

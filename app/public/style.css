@@ -198,3 +198,21 @@ button:hover { opacity: .88; }
   background: var(--bg); border: 1px solid var(--line); border-radius: 3px;
   padding: 0 3px; font-size: 11px;
 }
+
+
+/* Retailer profile tabs. */
+.site-tab {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: inherit;
+  border-radius: 6px;
+  padding: 4px 12px;
+  margin-left: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+.site-tab.on {
+  background: var(--accent, #1d3557);
+  border-color: var(--accent, #1d3557);
+  color: #fff;
+}
