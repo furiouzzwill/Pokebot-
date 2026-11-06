@@ -186,3 +186,69 @@ test('keywords are editable from the dashboard', async () => {
   assert.deepEqual(state.rules.keywords, ['prismatic']);
   dash.close();
 });
+
+test('Japanese imports and merch on the page are never offered', async () => {
+  const dash = client('dashboard');
+  const ext = client('extension');
+  await Promise.all([dash.ready, ext.ready]);
+
+  const real = 'https://www.walmart.com/ip/Pokemon-TCG-Elite-Trainer-Box/4440001111';
+  const junk = [
+    { url: 'https://www.walmart.com/ip/Pokemon-Japanese-Booster-Box/4440002222', title: 'Pokemon Japanese Booster Box' },
+    { url: 'https://www.walmart.com/ip/Pikachu-Plush/4440003333', title: 'Pokemon Pikachu Plush' },
+    { url: 'https://www.walmart.com/ip/Pokemon-Sleeves/4440004444', title: 'Pokemon TCG Card Sleeves' },
+  ];
+
+  // The rules may have been narrowed by an earlier test; start from defaults.
+  const { DEFAULT_RULES } = require('../app/state');
+  dash.send({ type: 'setRules', rules: DEFAULT_RULES });
+
+  ext.send({
+    type: 'event',
+    kind: 'discovered',
+    site: 'walmart',
+    products: [...junk, { url: real, title: 'Pokemon TCG Elite Trainer Box', fresh: true }].map((p) => ({
+      site: 'walmart',
+      ...p,
+    })),
+  });
+
+  const state = await dash.next(
+    (m) => m.type === 'state' && (m.discoveries || []).some((d) => d.url === real),
+  );
+  for (const item of junk) {
+    assert.ok(!state.discoveries.some((d) => d.url === item.url), `${item.title} must be filtered`);
+  }
+  assert.equal(state.discoveries.find((d) => d.url === real).fresh, true);
+
+  dash.close();
+  ext.close();
+});
+
+test('adding an exclusion clears matching finds already in the queue', async () => {
+  const dash = client('dashboard');
+  const ext = client('extension');
+  await Promise.all([dash.ready, ext.ready]);
+
+  const { DEFAULT_RULES } = require('../app/state');
+  const tin = 'https://www.target.com/p/pokemon-tcg-stacking-tin/-/A-77770000';
+  ext.send({
+    type: 'event',
+    kind: 'discovered',
+    site: 'target',
+    products: [{ url: tin, site: 'target', title: 'Pokemon TCG Stacking Tin' }],
+  });
+  await dash.next((m) => m.type === 'state' && (m.discoveries || []).some((d) => d.url === tin && !d.dismissed));
+
+  dash.send({
+    type: 'setRules',
+    rules: { ...DEFAULT_RULES, excludeKeywords: [...DEFAULT_RULES.excludeKeywords, 'stacking'] },
+  });
+  const after = await dash.next(
+    (m) => m.type === 'state' && m.rules.excludeKeywords.includes('stacking'),
+  );
+  assert.ok(!after.discoveries.some((d) => d.url === tin && !d.dismissed));
+
+  dash.close();
+  ext.close();
+});

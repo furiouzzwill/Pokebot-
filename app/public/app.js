@@ -8,7 +8,7 @@ const NUMS = [
   'maxPrice', 'maxOrderTotal', 'maxOrderItems', 'maxOrdersPerDay', 'reloadSeconds',
   'redditIntervalMinutes', 'discordPollSeconds',
 ];
-const LISTS = ['keywords', 'subreddits'];
+const LISTS = ['requireKeywords', 'keywords', 'excludeKeywords', 'subreddits'];
 
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token');
@@ -172,7 +172,11 @@ function pushRules() {
 }
 
 function renderDiscoveries(items) {
-  const open = items.filter((item) => !item.dismissed);
+  // New listings first: something that appeared while you were watching is
+  // the drop, and it shouldn't sit under a page of already-listed results.
+  const open = items
+    .filter((item) => !item.dismissed)
+    .sort((a, b) => Number(b.fresh !== false) - Number(a.fresh !== false));
   const list = $('discoveries');
   list.textContent = '';
 
@@ -181,7 +185,9 @@ function renderDiscoveries(items) {
 
     const kind = document.createElement('span');
     kind.className = `kind-tag ${item.kind === 'product' ? 'product' : ''}`;
-    kind.textContent = item.kind === 'product' ? 'link' : 'news';
+    const isNew = item.kind === 'product' && item.fresh !== false && item.source === 'search page';
+    kind.textContent = item.kind !== 'product' ? 'news' : isNew ? 'NEW' : item.fresh === false ? 'listed' : 'link';
+    if (isNew) kind.classList.add('new');
 
     const main = document.createElement('div');
     main.className = 'disc-main';

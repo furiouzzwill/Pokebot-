@@ -135,6 +135,41 @@ test('a late product is reported without re-reporting the earlier ones', { skip:
   assert.equal(new Set(all).size, all.length, 'no product should be reported twice');
 });
 
+test('takes the name from whichever link in a tile has one', { skip: SKIP }, async () => {
+  // The image link comes first and has no text -- only alt text, or nothing.
+  const html = `<!doctype html><html><head><title>pokemon : Target</title></head><body><div id="root">
+    <a href="/p/x/-/A-11112222"><img src="x.png" alt=""></a>
+    <a href="/p/x/-/A-11112222">Pokemon TCG Mega Evolution Elite Trainer Box</a>
+    <a href="/p/y/-/A-33334444"><img src="y.png" alt="Pokemon TCG Booster Bundle"></a>
+  </div></body></html>`;
+  const found = products(await drive({ html, url: TARGET_SEARCH }));
+  const byId = Object.fromEntries(found.map((p) => [p.id, p.title]));
+  assert.equal(byId['11112222'], 'Pokemon TCG Mega Evolution Elite Trainer Box');
+  assert.equal(byId['33334444'], 'Pokemon TCG Booster Bundle');
+});
+
+test('a tile whose name has not rendered yet is held back, not burned', { skip: SKIP }, async () => {
+  // Reporting it nameless would get it rejected by the keyword filter, and
+  // the id would be marked seen so it never got another chance.
+  const msgs = await drive({
+    html: `<!doctype html><html><head><title>pokemon : Target</title></head><body><div id="root">
+      <a id="late" href="/p/z/-/A-55556666"></a></div></body></html>`,
+    url: TARGET_SEARCH,
+    mutate: () => {
+      document.getElementById('late').textContent = 'Pokemon TCG Surprise Box';
+    },
+  });
+  const found = products(msgs).filter((p) => p.id === '55556666');
+  assert.equal(found.length, 1);
+  assert.equal(found[0].title, 'Pokemon TCG Surprise Box');
+});
+
+test('results present when the tab opens are marked as already listed', { skip: SKIP }, async () => {
+  const found = products(await drive({ html: targetResults, url: TARGET_SEARCH }));
+  assert.ok(found.length > 0);
+  assert.ok(found.every((p) => p.fresh === false), 'baseline results are not new drops');
+});
+
 test('stops on a bot-check page instead of scraping it', { skip: SKIP }, async () => {
   const msgs = await drive({
     html: fs.readFileSync(path.join(FIXTURES, 'walmart-bot-challenge.html'), 'utf8'),

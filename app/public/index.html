@@ -99,9 +99,21 @@
     </div>
 
     <div class="field">
-      <label for="keywords">Keywords</label>
-      <input type="text" id="keywords" placeholder="pokemon, elite trainer, etb">
-      <p class="hint">A find must match one of these. Comma separated.</p>
+      <label for="requireKeywords">Must mention</label>
+      <input type="text" id="requireKeywords" placeholder="pokemon">
+      <p class="hint">Search-page listings must name one of these. Accents don't matter.</p>
+    </div>
+
+    <div class="field">
+      <label for="keywords">Product types</label>
+      <input type="text" id="keywords" placeholder="elite trainer box, etb, booster bundle, tin">
+      <p class="hint">...and be one of these. Whole words; plurals match too. Comma separated.</p>
+    </div>
+
+    <div class="field">
+      <label for="excludeKeywords">Never add</label>
+      <input type="text" id="excludeKeywords" placeholder="japanese, korean, plush, sleeves, lot">
+      <p class="hint">Anything mentioning one of these is skipped, from every source. Editing this also clears matching junk already in the queue.</p>
     </div>
 
     <div class="field">

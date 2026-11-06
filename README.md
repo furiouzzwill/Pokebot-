@@ -219,8 +219,38 @@ Discovery fills that in from two sources, both surfaced in the dashboard's
   open in a tab, the extension reports product links as they appear —
   including ones added while you're watching. This is the fast path.
 
-Both are filtered against your keywords, so the socks that share a results
-page with the ETB don't end up on the watchlist.
+### What gets through the filter
+
+A plain "pokemon" match let through nearly everything on a results page —
+Japanese and Korean imports from marketplace sellers, plushies, sleeves,
+shirts, repacks — and the actual new set got buried under it. Finds are now
+screened against three lists (whole words, accents and plurals folded, so
+`pokémon` = `pokemon` and `tin` doesn't fire inside `stinger`):
+
+| List | Rule | Default |
+|---|---|---|
+| **Must mention** | Search-page listings must name one | `pokemon` |
+| **Product types** | …and be one of these | ETB, booster bundle/box/pack, blister, collection, tin, build & battle, TCG… |
+| **Never add** | …and mention none. Always wins, every source | japanese, korean, chinese, plush, sleeves, shirt, lot, repack, graded, empty… |
+
+Editing them in the dashboard also re-screens the queue, so adding a word to
+**Never add** clears the junk already sitting there. If you were on the old
+default keywords, you're upgraded to these automatically; a list you edited
+yourself is left alone.
+
+### New listings vs. ones that were already there
+
+Whatever is on the search page in the first 15 seconds after you open the tab
+is recorded as **listed** — it was there before you started watching. Anything
+that appears after that is tagged **NEW**, sorted to the top of the queue, and
+is the only thing that pings Discord or gets auto-added. That way auto-add
+can't open a pinned tab for every result on page one, and the 3am drop
+doesn't sit underneath forty plushies.
+
+A tile whose link renders before its name is held for a few seconds until the
+name fills in. Before, it was reported nameless, rejected by the filter, and
+marked seen — so the newest listing on the page, the one still hydrating, was
+exactly the one that got lost.
 
 Finds land in a review queue and are **not watched until you press Watch**.
 `Add finds automatically` skips that step, and is off by default for a
@@ -241,7 +271,14 @@ refresh doesn't re-announce the whole page.
 new listing under established best-sellers, so a fresh SKU can take a long
 time to surface — or never appear on page one at all. Point the tab at a
 category sorted newest-first instead of `?searchTerm=pokemon`; the watcher
-takes any Walmart or Target search, browse, or category URL.
+takes any Walmart or Target search, browse, or category URL. Good starting
+points (check the page actually shows "Newest" as the sort):
+
+- `https://www.target.com/s?searchTerm=pokemon+trading+cards&sortBy=newest`
+- `https://www.walmart.com/search?q=pokemon+tcg&sort=new`
+
+Open the tab well before the drop window — say 2:30 for a 3am drop — so the
+baseline is taken before the new listings appear.
 
 ## Discord
 

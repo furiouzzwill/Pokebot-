@@ -1,5 +1,7 @@
 'use strict';
 
+const { matchTerms } = require('./filter');
+
 /**
  * Drop announcements from subreddit RSS.
  *
@@ -60,13 +62,13 @@ function extractProductUrls(html) {
   return found;
 }
 
-/** @returns {string[]} the keywords that matched, empty when none did. */
+/**
+ * @returns {string[]} the keywords that matched, empty when none did. Whole
+ * words with accents folded -- see filter.js for why substring matching was
+ * dropped.
+ */
 function matchKeywords(text, keywords) {
-  const haystack = text.toLowerCase();
-  return keywords.filter((word) => {
-    const needle = String(word).trim().toLowerCase();
-    return needle !== '' && haystack.includes(needle);
-  });
+  return matchTerms(text, keywords);
 }
 
 /**

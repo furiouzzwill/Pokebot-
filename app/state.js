@@ -49,8 +49,46 @@ const DEFAULT_SETTINGS = {
 /** Subreddits and keywords are lists, kept out of the numeric/boolean block. */
 const DEFAULT_RULES = {
   subreddits: ['pkmntcgdeals', 'PokeInvesting'],
-  keywords: ['pokemon', 'pokémon', 'elite trainer', 'booster bundle', 'etb'],
+  // A search-page listing must name the brand...
+  requireKeywords: ['pokemon'],
+  // ...and be one of these product types. Whole words, plurals included.
+  keywords: [
+    'elite trainer box', 'etb', 'booster bundle', 'booster box', 'booster pack',
+    'booster display', 'blister', 'collection', 'tin', 'build & battle',
+    'surprise box', 'trading card game', 'tcg',
+  ],
+  // ...and contain none of these. Exclusion always wins. This is what keeps
+  // the marketplace imports and the merch out of the queue.
+  excludeKeywords: [
+    'japanese', 'japan', 'jp', 'jpn', 'korean', 'chinese', 'thai', 'indonesian',
+    'high class pack',
+    'plush', 'plushie', 'toy', 'squishmallow', 'funko', 'lego',
+    'sleeves', 'deck box', 'playmat', 'toploader', 'top loader', 'portfolio',
+    'storage', 'display case', 'acrylic', 'magnetic',
+    't-shirt', 'shirt', 'hoodie', 'costume', 'pajama', 'socks', 'backpack',
+    'lunch', 'sticker', 'puzzle', 'book', 'coloring', 'keychain',
+    'video game', 'nintendo switch',
+    'lot', 'repack', 'mystery', 'graded', 'psa', 'cgc', 'bgs', 'empty',
+    'no cards', 'case only', 'custom', 'proxy', 'metal card', 'gold metal',
+  ],
 };
+
+/**
+ * The keyword list shipped before exclusions existed. A state file still
+ * holding exactly this is upgraded to the new defaults; anything the user
+ * edited is left alone.
+ */
+const LEGACY_KEYWORDS = ['pokemon', 'pokémon', 'elite trainer', 'booster bundle', 'etb'];
+
+function migrateRules(stored) {
+  const rules = { ...DEFAULT_RULES, ...(stored || {}) };
+  const legacy =
+    Array.isArray(rules.keywords) &&
+    rules.keywords.length === LEGACY_KEYWORDS.length &&
+    rules.keywords.every((k, i) => k === LEGACY_KEYWORDS[i]);
+  if (legacy) rules.keywords = [...DEFAULT_RULES.keywords];
+  return rules;
+}
 
 function emptyState() {
   return {
@@ -67,7 +105,7 @@ function load() {
     const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
     return {
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
-      rules: { ...DEFAULT_RULES, ...(parsed.rules || {}) },
+      rules: migrateRules(parsed.rules),
       watchlist: Array.isArray(parsed.watchlist) ? parsed.watchlist : [],
       history: Array.isArray(parsed.history) ? parsed.history : [],
       discoveries: Array.isArray(parsed.discoveries) ? parsed.discoveries : [],
@@ -203,7 +241,7 @@ const MAX_DISCOVERIES = 200;
  *
  * @returns {object|null} the stored candidate, or null if already known.
  */
-function addDiscovery({ key, kind, title, url, site, source, matched = [] }) {
+function addDiscovery({ key, kind, title, url, site, source, matched = [], fresh = true }) {
   if (!key) return null;
   if (state.discoveries.some((d) => d.key === key)) return null;
 
@@ -218,6 +256,10 @@ function addDiscovery({ key, kind, title, url, site, source, matched = [] }) {
     site: site || '',
     source: source || '',
     matched,
+    // false = it was already listed when the search tab first loaded. Those
+    // are worth seeing, but a listing that appears *while you watch* is the
+    // drop, so fresh ones are flagged, announced, and eligible for auto-add.
+    fresh: Boolean(fresh),
     at: new Date().toISOString(),
     dismissed: false,
   };
@@ -240,7 +282,7 @@ function dismissDiscovery(key) {
 
 function setRules(patch) {
   const next = { ...state.rules };
-  for (const field of ['subreddits', 'keywords']) {
+  for (const field of ['subreddits', 'keywords', 'requireKeywords', 'excludeKeywords']) {
     if (!Array.isArray(patch?.[field])) continue;
     next[field] = patch[field]
       .map((value) => String(value).trim())

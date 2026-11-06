@@ -57,8 +57,36 @@ function saveSeen(seen) {
   }
 }
 
+// Whether this tab has already recorded what was listed before you started
+// watching. Kept in sessionStorage so it survives the periodic reload.
+const BASELINE_KEY = `pokebot:baseline:${location.pathname}${location.search}`;
+// Results hydrate in stages and lazy-load as they scroll in, so "already
+// listed" means anything seen in the first stretch after the tab opened.
+const BASELINE_WINDOW_MS = 15 * 1000;
+
+function loadBaselined() {
+  try {
+    return sessionStorage.getItem(BASELINE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A tile whose link has rendered but whose name hasn't yet is retried for this
+ * long before being reported with only its URL. Reporting it nameless
+ * straight away was the bug that lost new drops: the dashboard screens on the
+ * title, rejected the blank one, and the id was already marked seen so the
+ * tile never got a second chance once its name filled in.
+ */
+const UNTITLED_GRACE_MS = 8 * 1000;
+
+const startedAt = Date.now();
+
 const state = {
   seen: loadSeen(),
+  baselined: loadBaselined(),
+  untitled: new Map(), // id -> when first seen without a usable title
   timer: null,
   reloadTimer: null,
   observer: null,
@@ -76,14 +104,35 @@ function isChallenge() {
   );
 }
 
-/** @returns {Array<{url,id,site,title}>} products currently on the page. */
+function cleanText(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Best available name for a product link. The image link usually comes first
+ * in a tile and has no text, so every candidate is considered and the longest
+ * wins: aria-label, visible text, title attribute, image alt text.
+ */
+function anchorTitle(anchor) {
+  const candidates = [
+    anchor.getAttribute('aria-label'),
+    anchor.textContent,
+    anchor.getAttribute('title'),
+    ...[...anchor.querySelectorAll('img[alt]')].map((img) => img.getAttribute('alt')),
+  ].map(cleanText);
+  return candidates.reduce((best, next) => (next.length > best.length ? next : best), '');
+}
+
+// Badge text, prices and ratings get swept up in a tile's textContent; none of
+// it is a product name.
+const NOT_A_TITLE = /^(?:\$[\d.,]+.*|\d+(?:\.\d)? out of 5.*|sponsored|new|add to cart|shop now)$/i;
+
+/** @returns {Array<{url,id,site,title,fresh}>} products currently on the page. */
 function scrape() {
   const pattern = PRODUCT_PATTERNS[SITE];
-  const found = [];
-  // Results pages link the same product from its image and its title, so a
-  // pass must dedupe against itself as well as against earlier passes --
-  // state.seen is only written once the batch is reported.
-  const thisPass = new Set();
+  // Results pages link the same product from its image and its title, so
+  // collect every link per id first and pick the best name across them.
+  const byId = new Map();
 
   for (const anchor of document.querySelectorAll('a[href]')) {
     let url;
@@ -97,16 +146,47 @@ function scrape() {
     const match = pattern.exec(url.pathname);
     if (!match) continue;
 
+    const id = match[1];
+    if (state.seen.has(id)) continue;
+
     // Drop tracking params so the same product doesn't look like several.
     const clean = `${url.origin}${url.pathname}`;
-    const id = match[1];
-    if (state.seen.has(id) || thisPass.has(id)) continue;
-    thisPass.add(id);
+    let title = anchorTitle(anchor);
+    if (NOT_A_TITLE.test(title)) title = '';
 
-    const title =
-      (anchor.getAttribute('aria-label') || anchor.textContent || '').replace(/\s+/g, ' ').trim();
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, { url: clean, id, site: SITE, title });
+    } else if (title.length > existing.title.length) {
+      existing.title = title;
+    }
+  }
 
-    found.push({ url: clean, id, site: SITE, title: title.slice(0, 140) });
+  // Inside the baseline window everything on the page was listed before you
+  // started watching; after it, a new id is a new listing.
+  const fresh = state.baselined || Date.now() - startedAt > BASELINE_WINDOW_MS;
+
+  const found = [];
+  for (const product of byId.values()) {
+    if (product.title === '') {
+      if (!state.untitled.has(product.id)) state.untitled.set(product.id, Date.now());
+      // Name may still be rendering; the 3s interval tick comes back for it.
+      if (Date.now() - state.untitled.get(product.id) < UNTITLED_GRACE_MS) continue;
+    }
+    state.untitled.delete(product.id);
+    product.title = product.title.slice(0, 160);
+    product.fresh = fresh;
+    found.push(product);
+  }
+
+  if (!state.baselined && Date.now() - startedAt > BASELINE_WINDOW_MS) {
+    state.baselined = true;
+    try {
+      sessionStorage.setItem(BASELINE_KEY, '1');
+    } catch {
+      // Without storage the next reload re-baselines; the server dedupes by
+      // URL, so that costs nothing but the fresh flag on those 90 seconds.
+    }
   }
 
   return found;
@@ -118,7 +198,11 @@ function report(products) {
   saveSeen(state.seen);
   state.reported += products.length;
 
-  log(`found ${products.length} product(s)`, products.map((p) => p.title || p.id));
+  const fresh = products.filter((p) => p.fresh).length;
+  log(
+    `found ${products.length} product(s), ${fresh} new since you started watching`,
+    products.map((p) => `${p.fresh ? 'NEW ' : ''}${p.title || p.id}`),
+  );
   try {
     chrome.runtime.sendMessage({
       kind: 'discovered',

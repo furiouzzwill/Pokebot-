@@ -21,7 +21,8 @@ const os = require('os');
 const { WebSocketServer } = require('ws');
 
 const state = require('./state');
-const { fetchSubreddit, matchKeywords } = require('../src/discovery/reddit');
+const { fetchSubreddit } = require('../src/discovery/reddit');
+const { screen, slugText } = require('../src/discovery/filter');
 const discordIn = require('../src/discovery/discord');
 const { postAlert, DEFAULT_EVENTS } = require('../src/discord');
 
@@ -179,6 +180,19 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
 
     setRules(client, message) {
       state.setRules(message.rules);
+      // Re-screen what's already queued, so tightening the rules clears out
+      // the junk that got in under the old ones instead of only filtering
+      // future finds.
+      const { rules } = state.getState();
+      for (const found of [...state.getState().discoveries]) {
+        if (found.dismissed || found.kind !== 'product') continue;
+        const fromSearch = found.source === 'search page';
+        const verdict = screen(`${found.title} ${slugText(found.url)}`, rules, {
+          requireBrand: fromSearch,
+          requireType: fromSearch,
+        });
+        if (!verdict.ok) state.dismissDiscovery(found.key);
+      }
       syncAll();
     },
 
@@ -246,9 +260,17 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
   }
 
   /**
-   * Products scraped off a retailer search page. Only those whose title
-   * matches a keyword are kept -- a search results page is full of things you
-   * did not ask for.
+   * Products scraped off a retailer search page.
+   *
+   * A results page is mostly things you did not ask for, so the bar here is
+   * the strictest: the listing must name the brand, be a product type on your
+   * list, and hit nothing on the exclude list. The URL slug is screened along
+   * with the title because it repeats the product name and is present even
+   * when the tile's text was thin.
+   *
+   * `fresh: false` marks listings that were already on the page when the tab
+   * first loaded. They're queued, but quietly; a listing that appears while
+   * you watch is the drop, and only those ping Discord or auto-add.
    */
   function ingestSearchProducts(products) {
     const { rules, settings } = state.getState();
@@ -257,9 +279,10 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     let added = 0;
     for (const product of products) {
       if (!product || !product.url) continue;
-      const matched = matchKeywords(product.title || product.url, rules.keywords);
-      if (rules.keywords.length > 0 && matched.length === 0) continue;
+      const verdict = screen(`${product.title || ''} ${slugText(product.url)}`, rules);
+      if (!verdict.ok) continue;
 
+      const fresh = product.fresh !== false;
       const entry = state.addDiscovery({
         key: product.url,
         kind: 'product',
@@ -267,11 +290,14 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
         url: product.url,
         site: product.site,
         source: 'search page',
-        matched,
+        matched: verdict.matched,
+        fresh,
       });
       if (entry) {
         added += 1;
-        announce({ kind: 'discovered', name: entry.title, url: entry.url, site: entry.site, source: entry.source });
+        if (fresh) {
+          announce({ kind: 'discovered', name: `🆕 ${entry.title}`, url: entry.url, site: entry.site, source: entry.source });
+        }
       }
     }
     if (added > 0) autoAddOrAnnounce();
@@ -314,6 +340,12 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
       if (newest) discordCursors.set(channelId, newest);
 
       for (const found of discordIn.parseMessages(result.messages, { keywords: rules.keywords })) {
+        // Someone posting a link is signal enough to skip the keyword check,
+        // but not the exclude list -- a shared link to a Japanese box is
+        // still a Japanese box.
+        if (!screen(`${found.title} ${slugText(found.url)}`, rules, { requireBrand: false, requireType: false }).ok) {
+          continue;
+        }
         const entry = state.addDiscovery({
           key: found.key,
           kind: found.kind,
@@ -338,6 +370,10 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     if (settings.autoAddDiscoveries) {
       for (const found of [...state.getState().discoveries]) {
         if (found.dismissed || found.kind !== 'product' || !found.url) continue;
+        // A listing that was already on the search page when the tab opened
+        // isn't a new drop; auto-adding the whole page would open a pinned
+        // tab per result. Those wait for a manual Watch.
+        if (found.fresh === false) continue;
         try {
           state.addItem({ url: found.url, name: found.title });
           state.dismissDiscovery(found.key);
@@ -397,6 +433,7 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
       if (result.error) continue;
 
       for (const post of result.entries) {
+        if (!screen(post.title, rules, { requireBrand: false, requireType: false }).ok) continue;
         // A post carrying a product link is directly actionable; one without
         // is a heads-up, and both are worth knowing about.
         if (post.products.length > 0) {
