@@ -280,6 +280,58 @@ points (check the page actually shows "Newest" as the sort):
 Open the tab well before the drop window — say 2:30 for a 3am drop — so the
 baseline is taken before the new listings appear.
 
+## Alerts from your phone (TrackaLacker and similar)
+
+If you pay for an alert service, its ping usually reaches your phone first —
+and by the time you've tapped through on mobile, it's gone. This hands the
+link to the computer instead, where the extension opens it in your logged-in
+Chrome and carts it immediately under your normal settings (armed, dry run,
+max price, and checkout gates all still apply).
+
+**Turn it on**
+
+- *Desktop app:* tray icon → **Accept alerts from phone** (the app restarts),
+  then **Copy phone alert link**.
+- *From source:* `POKEBOT_PHONE=1 POKEBOT_TOKEN=$(openssl rand -hex 16) npm run app`
+  — it prints the link.
+
+The link looks like `http://192.168.1.20:8787/api/link?token=…`. Only that one
+endpoint is reachable from the network; the dashboard itself stays local to
+the computer. The token is what stops anyone else on the wifi from adding
+items, so keep it private.
+
+**What to send it:** `POST` either `{"url": "<link>"}`, `{"text": "<the whole
+alert message>"}`, or the raw text. It finds the Walmart/Target product link
+in it, following the alert service's tracking redirect if the link is wrapped
+in one. Links to other stores (Pokémon Center, Best Buy, GameStop) are
+rejected — the extension only knows how to cart at Walmart and Target.
+
+**Hooking it up to the alert**
+
+What can be automated depends on how the alert reaches you:
+
+| Alert arrives as | iPhone | Android |
+|---|---|---|
+| **Text message (SMS)** | Fully automatic: Shortcuts → Automation → **Message**, sender = the alert number, **Run Immediately**. Action: **Get Contents of URL**, method POST, request body JSON with key `text` = Shortcut Input. | Fully automatic with an automation app (MacroDroid, Tasker): SMS-received trigger → HTTP POST with the message body. |
+| **App push notification** | Not automatable — iOS doesn't let one app read another's notifications. Use the share route below. | Automation apps can read notifications, but a push usually carries only the product name, not the link — check before relying on it. |
+| **Browser push on this computer** | — | — |
+
+The last row needs nothing: clicking a desktop browser alert opens the product
+page in Chrome, and the extension carts any Walmart/Target product page you
+open, not only watched ones.
+
+**The share route (any phone, one tap):** make a Shortcut that accepts URLs
+from the Share Sheet and POSTs them the same way. When an alert lands, open
+it, tap Share → your shortcut. Still a tap, but the buying happens on the
+computer, which is already logged in and doesn't lose time to the phone
+loading the page.
+
+SMS is the dependable route because the link is in the message itself. If
+your plan includes SMS alerts, use those for the drops you care most about.
+
+Every link received (and every one rejected, with the reason) shows up in the
+activity feed.
+
 ## Discord
 
 Both directions, both optional, both configured in `.env` rather than the

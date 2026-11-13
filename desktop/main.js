@@ -9,8 +9,10 @@
  * real logged-in session.
  */
 
+const fs = require('fs');
 const path = require('path');
-const { app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage } = require('electron');
+const crypto = require('crypto');
+const { app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage, clipboard } = require('electron');
 
 const { createDashboard, DEFAULT_PORT } = require('../app/server');
 
@@ -78,6 +80,65 @@ function createWindow() {
   });
 }
 
+/**
+ * Phone alerts: lets a phone on the same wifi POST drop links (from an SMS
+ * automation or a share-sheet shortcut) into the watchlist. Off by default.
+ * The token is generated once and kept in the app's data folder, so the link
+ * set up on the phone keeps working across restarts.
+ */
+function phoneConfigPath() {
+  return path.join(app.getPath('userData'), 'phone-alerts.json');
+}
+
+function loadPhoneConfig() {
+  let config = {};
+  try {
+    config = JSON.parse(fs.readFileSync(phoneConfigPath(), 'utf8'));
+  } catch {
+    // First run, or unreadable: start disabled with a fresh token.
+  }
+  if (typeof config.token !== 'string' || config.token.length < 16) {
+    config.token = crypto.randomBytes(16).toString('hex');
+  }
+  config.enabled = Boolean(config.enabled);
+  savePhoneConfig(config);
+  return config;
+}
+
+function savePhoneConfig(config) {
+  try {
+    fs.mkdirSync(path.dirname(phoneConfigPath()), { recursive: true });
+    fs.writeFileSync(phoneConfigPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
+  } catch {
+    // Non-fatal; the toggle just won't persist.
+  }
+}
+
+function setPhoneAlerts(enabled) {
+  const config = loadPhoneConfig();
+  config.enabled = enabled;
+  savePhoneConfig(config);
+  // The listening address changes, so the server has to restart.
+  app.relaunch();
+  quitting = true;
+  app.quit();
+}
+
+function copyPhoneLink() {
+  const link = dashboard?.phoneLinkUrl() || '';
+  if (!link) return;
+  clipboard.writeText(link);
+  dialog.showMessageBox({
+    type: 'info',
+    title: 'Pokebot',
+    message: 'Phone alert link copied',
+    detail:
+      `${link}\n\nUse this as the URL in your phone shortcut or automation (POST, ` +
+      'body = the alert text or link). It only works on the same wifi as this computer. ' +
+      'Keep it private: anyone with it can add items to your watchlist.',
+  });
+}
+
 function createTray() {
   const image = nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 });
   tray = new Tray(image);
@@ -88,6 +149,18 @@ function createTray() {
       {
         label: 'Open in browser',
         click: () => shell.openExternal(dashboardUrl),
+      },
+      { type: 'separator' },
+      {
+        label: 'Accept alerts from phone',
+        type: 'checkbox',
+        checked: Boolean(dashboard?.isPhone),
+        click: (item) => setPhoneAlerts(item.checked),
+      },
+      {
+        label: 'Copy phone alert link',
+        enabled: Boolean(dashboard?.isPhone),
+        click: copyPhoneLink,
       },
       { type: 'separator' },
       {
@@ -106,7 +179,8 @@ async function start() {
   const port = Number.parseInt(process.env.POKEBOT_PORT, 10) || DEFAULT_PORT;
 
   try {
-    dashboard = createDashboard({ port });
+    const phone = loadPhoneConfig();
+    dashboard = createDashboard({ port, phoneAlerts: phone.enabled, token: phone.token });
     await dashboard.listen();
   } catch (err) {
     const message =

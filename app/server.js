@@ -23,6 +23,7 @@ const { WebSocketServer } = require('ws');
 const state = require('./state');
 const { fetchSubreddit } = require('../src/discovery/reddit');
 const { screen, slugText } = require('../src/discovery/filter');
+const { resolveAlertLink } = require('../src/discovery/inbound');
 const discordIn = require('../src/discovery/discord');
 const { postAlert, DEFAULT_EVENTS } = require('../src/discord');
 
@@ -56,19 +57,29 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
  * @param {string} options.token  Required when lan is true.
  * @throws when LAN mode is requested without a token.
  */
-function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) {
+function createDashboard({ port = DEFAULT_PORT, lan = false, token = '', phoneAlerts = false } = {}) {
   const LAN = Boolean(lan);
+  // Phone-alerts mode listens on the network for /api/link only. The
+  // dashboard and the extension socket stay loopback-only, so a phone can
+  // hand over a link but nothing else on the wifi can see or change anything.
+  const PHONE = Boolean(phoneAlerts) && !LAN;
   const TOKEN = String(token || '').trim();
-  const HOST = LAN ? '0.0.0.0' : '127.0.0.1';
+  const HOST = LAN || PHONE ? '0.0.0.0' : '127.0.0.1';
 
-  if (LAN && TOKEN === '') {
+  if ((LAN || PHONE) && TOKEN === '') {
     throw new Error(
-      'LAN mode exposes the dashboard on your network, so a token is required.\n' +
+      `${LAN ? 'LAN' : 'Phone-alerts'} mode listens on your network, so a token is required.\n` +
         `Generate one:  POKEBOT_TOKEN=${crypto.randomBytes(12).toString('hex')}`,
     );
   }
 
+  function isLoopback(req) {
+    const addr = req.socket?.remoteAddress || '';
+    return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+  }
+
   function authorised(req) {
+    if (PHONE) return isLoopback(req);
     if (!LAN) return true; // Loopback only; nothing else can reach it.
     const url = new URL(req.url, 'http://localhost');
     const supplied =
@@ -77,7 +88,125 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(TOKEN));
   }
 
+  /**
+   * Strict token check for endpoints that can start a purchase. Unlike the
+   * dashboard itself, these demand the token even on loopback: any web page
+   * you visit can POST to 127.0.0.1, and this one queues a buy.
+   */
+  function hasToken(req) {
+    if (TOKEN === '') return false;
+    const url = new URL(req.url, 'http://localhost');
+    const supplied =
+      url.searchParams.get('token') || (req.headers.authorization || '').replace(/^Bearer /, '');
+    if (supplied.length !== TOKEN.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(TOKEN));
+  }
+
+  function sendJson(res, status, body) {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  }
+
+  function readBody(req, limit = 16 * 1024) {
+    return new Promise((resolve, reject) => {
+      let size = 0;
+      const chunks = [];
+      req.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > limit) {
+          reject(new Error('too large'));
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      req.on('error', reject);
+    });
+  }
+
+  /**
+   * POST /api/link -- a drop alert from your phone.
+   *
+   * Body: JSON {"url": "..."} or {"text": "<whole SMS>"}, or plain text. The
+   * link can be the retailer's or an alert service's tracking link. It goes
+   * straight onto the watchlist, enabled, so the extension opens it in a
+   * pinned tab and carts it under your normal settings (armed, dry run, max
+   * price, checkout gates all still apply). No review queue: you chose these
+   * alerts, and the whole point is to beat the phone tap.
+   */
+  async function handleAlertLink(req, res) {
+    if (TOKEN === '') {
+      sendJson(res, 403, { ok: false, error: 'Set POKEBOT_TOKEN to enable /api/link' });
+      return;
+    }
+    if (!hasToken(req)) {
+      sendJson(res, 401, { ok: false, error: 'Bad or missing token' });
+      return;
+    }
+
+    let raw;
+    try {
+      raw = await readBody(req);
+    } catch {
+      sendJson(res, 413, { ok: false, error: 'Body too large' });
+      return;
+    }
+    let text = raw;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        text = [parsed.url, parsed.text, parsed.message].filter(Boolean).join(' ');
+      }
+    } catch {
+      // Plain text body; use as is.
+    }
+    // Shortcuts apps sometimes put the link in the query string instead.
+    const query = new URL(req.url, 'http://localhost').searchParams;
+    text = `${text} ${query.get('url') || ''}`.trim();
+
+    const found = await resolveAlertLink(text);
+    if (found.error) {
+      state.recordEvent({ kind: 'alert-ignored', detail: `${found.error}: ${text.slice(0, 120)}` });
+      syncAll();
+      sendJson(res, 422, { ok: false, error: found.error });
+      return;
+    }
+
+    // Tracking params would make the same product look like a new item.
+    const clean = (() => {
+      const u = new URL(found.url);
+      return `${u.origin}${u.pathname}`;
+    })();
+    const existing = state.getState().watchlist.find((item) => item.url === clean);
+    let item = existing;
+    if (existing) {
+      if (!existing.enabled) state.setItemEnabled(existing.id, true);
+    } else {
+      const name = text.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 100);
+      item = state.addItem({ url: clean, name: name || `Alert: ${found.site}` });
+    }
+    const entry = state.recordEvent({
+      kind: 'alert-link',
+      detail: existing ? 'Alert for an item already watched; tab kept open' : 'Opened from phone alert',
+      url: clean,
+      site: found.site,
+    });
+    syncAll();
+    broadcast({ type: 'event', entry }, 'dashboard');
+    sendJson(res, 200, { ok: true, url: clean, site: found.site, id: item.id, alreadyWatched: Boolean(existing) });
+  }
+
   const server = http.createServer((req, res) => {
+    if (new URL(req.url, 'http://localhost').pathname === '/api/link') {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: 'POST only' });
+        return;
+      }
+      handleAlertLink(req, res).catch(() => sendJson(res, 500, { ok: false, error: 'internal error' }));
+      return;
+    }
+
     if (!authorised(req)) {
       res.writeHead(401, { 'Content-Type': 'text/plain' });
       res.end('Unauthorized: append ?token=<POKEBOT_TOKEN>');
@@ -514,7 +643,14 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
   function url() {
     const actual = server.address()?.port ?? port;
     const host = LAN ? localAddress() : '127.0.0.1';
-    return `http://${host}:${actual}/${TOKEN ? `?token=${TOKEN}` : ''}`;
+    return `http://${host}:${actual}/${LAN && TOKEN ? `?token=${TOKEN}` : ''}`;
+  }
+
+  /** The address a phone on the same network POSTs alerts to. */
+  function phoneLinkUrl() {
+    if (!LAN && !PHONE) return '';
+    const actual = server.address()?.port ?? port;
+    return `http://${localAddress()}:${actual}/api/link?token=${TOKEN}`;
   }
 
   return {
@@ -522,7 +658,9 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '' } = {}) 
     wss,
     listen,
     url,
+    phoneLinkUrl,
     isLan: LAN,
+    isPhone: PHONE,
     pollReddit, // exposed so tests can drive a round without waiting
     pollDiscord,
     close: () => new Promise((resolve) => {
@@ -548,10 +686,14 @@ function optionsFromEnv() {
     port: Number.parseInt(process.env.POKEBOT_PORT, 10) || DEFAULT_PORT,
     lan: /^(1|true|yes)$/i.test(process.env.POKEBOT_LAN || ''),
     token: process.env.POKEBOT_TOKEN || '',
+    phoneAlerts: /^(1|true|yes)$/i.test(process.env.POKEBOT_PHONE || ''),
   };
 }
 
 if (require.main === module) {
+  // The README puts Discord and phone settings in .env; without this they
+  // were only picked up if exported in the shell.
+  require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
   let dashboard;
   try {
     dashboard = createDashboard(optionsFromEnv());
@@ -565,6 +707,7 @@ if (require.main === module) {
     .then(() => {
       console.log(`pokebot dashboard  ${dashboard.url()}`);
       if (dashboard.isLan) console.log('LAN mode: reachable from other devices on this network.');
+      if (dashboard.phoneLinkUrl()) console.log(`phone alerts  POST ${dashboard.phoneLinkUrl()}`);
       console.log('Load extension/ in Chrome and it will connect automatically.');
     })
     .catch((err) => {
