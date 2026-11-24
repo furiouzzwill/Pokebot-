@@ -333,6 +333,48 @@ points (check the page actually shows "Newest" as the sort):
 Open the tab well before the drop window — say 2:30 for a 3am drop — so the
 baseline is taken before the new listings appear.
 
+## Running it all day while you're at work
+
+The buying has to happen in a real logged-in browser, and a phone can't keep
+one running in the background: iOS suspends background apps within seconds,
+and Android kills or throttles them to save battery. So the setup that works
+is a computer left on at home doing the buying, with your phone as the
+remote control.
+
+**The computer.** Any old laptop or mini PC is fine; it idles at a few watts.
+Leave Chrome open with the extension loaded and the desktop app running.
+
+- **Keep computer awake** (tray, on by default) stops the machine from going
+  to sleep while Pokebot runs. The screen can still turn off.
+- Watched tabs are opted out of Chrome's Memory Saver, which otherwise
+  unloads tabs you haven't looked at and silently stops them watching. If
+  you open product tabs yourself, add walmart.com, target.com and
+  amazon.com under `chrome://settings/performance` → *Always keep these
+  sites active*.
+- Turn off Windows/macOS automatic restarts for updates during the week, or
+  at least set active hours.
+
+**Your phone.**
+
+1. Tray → **Control from phone (dashboard + alerts)**. The app restarts.
+2. Tray → **Copy phone dashboard link** and send it to your phone. On the
+   same wifi it works as is.
+3. From work: install [Tailscale](https://tailscale.com) (free) on the
+   computer and your phone, signed into the same account, and swap the
+   address in the link for the computer's Tailscale address (`100.x.x.x`).
+   Don't forward the port on your router instead: that puts the dashboard,
+   which can place orders, on the open internet.
+4. Set `DISCORD_WEBHOOK_URL` (see Discord below) so in-stock, carted and
+   order-placed alerts reach your phone.
+
+From the phone you can see what each tab is doing, arm/disarm, change caps,
+and paste new links. The link carries the token, so anyone holding it can
+do the same; keep it private.
+
+**When a CAPTCHA appears** the tab stops and alerts you (Discord pings for
+this one). Solve it from your phone with Chrome Remote Desktop
+(remotedesktop.google.com), which gives you the computer's screen.
+
 ## Alerts from your phone (TrackaLacker and similar)
 
 If you pay for an alert service, its ping usually reaches your phone first —

@@ -12,7 +12,9 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage, clipboard } = require('electron');
+const {
+  app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage, clipboard, powerSaveBlocker,
+} = require('electron');
 
 const { createDashboard, DEFAULT_PORT } = require('../app/server');
 
@@ -124,6 +126,31 @@ function setPhoneAlerts(enabled) {
   app.quit();
 }
 
+function setRemote(enabled) {
+  const config = loadPhoneConfig();
+  config.remote = enabled;
+  savePhoneConfig(config);
+  app.relaunch();
+  quitting = true;
+  app.quit();
+}
+
+function copyDashboardLink() {
+  if (!dashboard?.isLan) return;
+  const link = dashboard.url();
+  clipboard.writeText(link);
+  dialog.showMessageBox({
+    type: 'info',
+    title: 'Pokebot',
+    message: 'Phone dashboard link copied',
+    detail:
+      `${link}\n\nOpen this on your phone to see status, arm or disarm, and add links. ` +
+      'On the same wifi it works as is. From work, install Tailscale on this computer and ' +
+      'your phone and replace the address with this computer\'s Tailscale address (100.x.x.x). ' +
+      'Keep it private: anyone with it can control your watchlist and checkout settings.',
+  });
+}
+
 function copyPhoneLink() {
   const link = dashboard?.phoneLinkUrl() || '';
   if (!link) return;
@@ -139,6 +166,30 @@ function copyPhoneLink() {
   });
 }
 
+/**
+ * Keep the computer from sleeping while Pokebot runs. A sleeping machine runs
+ * nothing -- not this, not Chrome -- so a restock during the workday would
+ * be missed. The screen may still turn off. On by default; the choice is
+ * remembered in the same file as the phone settings.
+ */
+let awakeBlocker = null;
+
+function applyKeepAwake(on) {
+  if (on && awakeBlocker === null) {
+    awakeBlocker = powerSaveBlocker.start('prevent-app-suspension');
+  } else if (!on && awakeBlocker !== null) {
+    powerSaveBlocker.stop(awakeBlocker);
+    awakeBlocker = null;
+  }
+}
+
+function setKeepAwake(on) {
+  const config = loadPhoneConfig();
+  config.keepAwake = on;
+  savePhoneConfig(config);
+  applyKeepAwake(on);
+}
+
 function createTray() {
   const image = nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 });
   tray = new Tray(image);
@@ -152,14 +203,32 @@ function createTray() {
       },
       { type: 'separator' },
       {
+        label: 'Keep computer awake',
+        type: 'checkbox',
+        checked: awakeBlocker !== null,
+        click: (item) => setKeepAwake(item.checked),
+      },
+      {
+        label: 'Control from phone (dashboard + alerts)',
+        type: 'checkbox',
+        checked: Boolean(dashboard?.isLan),
+        click: (item) => setRemote(item.checked),
+      },
+      {
+        label: 'Copy phone dashboard link',
+        enabled: Boolean(dashboard?.isLan),
+        click: copyDashboardLink,
+      },
+      {
         label: 'Accept alerts from phone',
         type: 'checkbox',
-        checked: Boolean(dashboard?.isPhone),
+        checked: Boolean(dashboard?.isPhone || dashboard?.isLan),
+        enabled: !dashboard?.isLan,
         click: (item) => setPhoneAlerts(item.checked),
       },
       {
         label: 'Copy phone alert link',
-        enabled: Boolean(dashboard?.isPhone),
+        enabled: Boolean(dashboard?.isPhone || dashboard?.isLan),
         click: copyPhoneLink,
       },
       { type: 'separator' },
@@ -180,7 +249,13 @@ async function start() {
 
   try {
     const phone = loadPhoneConfig();
-    dashboard = createDashboard({ port, phoneAlerts: phone.enabled, token: phone.token });
+    applyKeepAwake(phone.keepAwake !== false);
+    dashboard = createDashboard({
+      port,
+      lan: Boolean(phone.remote),
+      phoneAlerts: phone.enabled,
+      token: phone.token,
+    });
     await dashboard.listen();
   } catch (err) {
     const message =
@@ -193,7 +268,8 @@ async function start() {
     return;
   }
 
-  dashboardUrl = dashboard.url();
+  // The window on this machine never needs the token in its URL.
+  dashboardUrl = dashboard.localUrl();
   console.log(`pokebot dashboard  ${dashboardUrl}`);
 
   createWindow();

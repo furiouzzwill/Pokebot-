@@ -81,6 +81,10 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '', phoneAl
   function authorised(req) {
     if (PHONE) return isLoopback(req);
     if (!LAN) return true; // Loopback only; nothing else can reach it.
+    // This machine itself (the extension, the desktop window) is trusted the
+    // same as in loopback-only mode, so turning on phone access doesn't
+    // require re-pairing the extension with the token.
+    if (isLoopback(req)) return true;
     const url = new URL(req.url, 'http://localhost');
     const supplied =
       url.searchParams.get('token') || (req.headers.authorization || '').replace(/^Bearer /, '');
@@ -643,6 +647,12 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '', phoneAl
     return `http://${host}:${actual}/${LAN && TOKEN ? `?token=${TOKEN}` : ''}`;
   }
 
+  /** The dashboard on this machine; loopback needs no token in any mode. */
+  function localUrl() {
+    const actual = server.address()?.port ?? port;
+    return `http://127.0.0.1:${actual}/`;
+  }
+
   /** The address a phone on the same network POSTs alerts to. */
   function phoneLinkUrl() {
     if (!LAN && !PHONE) return '';
@@ -656,6 +666,7 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '', phoneAl
     listen,
     url,
     phoneLinkUrl,
+    localUrl,
     isLan: LAN,
     isPhone: PHONE,
     pollReddit, // exposed so tests can drive a round without waiting

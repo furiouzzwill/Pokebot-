@@ -136,3 +136,24 @@ test('phone-alerts mode will not start without a token', () => {
   const { createDashboard } = require('../app/server');
   assert.throws(() => createDashboard({ port: 0, phoneAlerts: true }), /token/);
 });
+
+test('LAN mode: other devices need the token, this machine does not', async () => {
+  const os = require('os');
+  const { createDashboard } = require('../app/server');
+  const lanIp = Object.values(os.networkInterfaces()).flat()
+    .find((e) => e && e.family === 'IPv4' && !e.internal)?.address;
+  const dash = createDashboard({ port: 0, lan: true, token: TOKEN });
+  const lanPort = await dash.listen();
+  try {
+    const local = await fetch(`http://127.0.0.1:${lanPort}/`);
+    assert.equal(local.status, 200, 'the extension and desktop window must not need the token');
+    if (lanIp) {
+      const remote = await fetch(`http://${lanIp}:${lanPort}/`);
+      assert.equal(remote.status, 401, 'another device without the token must be refused');
+      const withToken = await fetch(`http://${lanIp}:${lanPort}/?token=${TOKEN}`);
+      assert.equal(withToken.status, 200);
+    }
+  } finally {
+    await dash.close();
+  }
+});

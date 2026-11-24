@@ -86,6 +86,14 @@ async function reconcileTabs(watchlist) {
       }
     }
     const tab = await chrome.tabs.create({ url: item.url, pinned: true, active: false });
+    // Chrome's Memory Saver unloads tabs you haven't looked at in a while. A
+    // discarded tab runs no scripts, so a watcher left all day would quietly
+    // stop watching; opt these tabs out.
+    try {
+      await chrome.tabs.update(tab.id, { autoDiscardable: false });
+    } catch {
+      // Older Chrome without the property; the README covers the setting.
+    }
     managedTabs.set(itemId, tab.id);
     bridgeLog('opened tab for', item.name);
   }
