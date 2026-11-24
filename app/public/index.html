@@ -24,7 +24,7 @@
     </div>
 
     <form id="addForm" class="add-row" autocomplete="off">
-      <input id="addUrl" type="url" placeholder="Walmart or Target product URL" required>
+      <input id="addUrl" type="url" placeholder="Walmart, Target or Amazon product URL" required>
       <input id="addName" type="text" placeholder="Label (optional)">
       <button type="submit">Add</button>
     </form>
@@ -58,6 +58,7 @@
     </div>
 
     <div class="ctl num"><label for="maxPrice">Max item price ($)</label><input type="number" id="maxPrice" min="1"></div>
+    <div class="ctl"><label for="amazonOnly"><strong>Amazon: sold by Amazon only</strong><span class="sub">skip third-party resellers</span></label><input type="checkbox" id="amazonOnly"></div>
     <div class="ctl num"><label for="maxOrderTotal">Max order total ($)</label><input type="number" id="maxOrderTotal" min="1"></div>
     <div class="ctl num"><label for="maxOrderItems">Max items per order</label><input type="number" id="maxOrderItems" min="1"></div>
     <div class="ctl num"><label for="maxOrdersPerDay">Max orders per day</label><input type="number" id="maxOrdersPerDay" min="1"></div>

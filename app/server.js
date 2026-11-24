@@ -174,11 +174,8 @@ function createDashboard({ port = DEFAULT_PORT, lan = false, token = '', phoneAl
     }
 
     // Tracking params would make the same product look like a new item.
-    const clean = (() => {
-      const u = new URL(found.url);
-      return `${u.origin}${u.pathname}`;
-    })();
-    const existing = state.getState().watchlist.find((item) => item.url === clean);
+    const { url: clean } = state.canonicalUrl(found.url);
+    const existing = state.getState().watchlist.find((item) => state.sameProduct(item.url, clean));
     let item = existing;
     if (existing) {
       if (!existing.enabled) state.setItemEnabled(existing.id, true);

@@ -8,7 +8,11 @@
  * payment, or CAPTCHAs.
  */
 
-const SITE = location.hostname.includes('walmart') ? 'walmart' : 'target';
+const SITE = location.hostname.includes('walmart')
+  ? 'walmart'
+  : location.hostname.includes('amazon')
+    ? 'amazon'
+    : 'target';
 
 const SELECTORS = {
   walmart: {
@@ -26,10 +30,36 @@ const SELECTORS = {
     price: ['[data-test="product-price"]', '[data-test="product-price-value"]'],
     soldOut: ['[data-test="outOfStockMessage"]'],
   },
+  amazon: {
+    // Add to Cart only. "Buy Now" skips the cart and the order-total checks.
+    cart: ['#add-to-cart-button', 'input[name="submit.add-to-cart"]'],
+    price: [
+      '#corePrice_feature_div .a-offscreen',
+      '#corePriceDisplay_desktop_feature_div .a-offscreen',
+      '#apex_desktop .a-offscreen',
+      '#price_inside_buybox',
+      '#priceblock_ourprice',
+    ],
+    soldOut: ['#outOfStock'],
+    seller: [
+      '#merchantInfoFeature_feature_div',
+      '[offer-display-feature-name="desktop-merchant-info"]',
+      '#merchant-info',
+      '#tabular-buybox',
+    ],
+    // The buy box; carousels below the fold carry their own cart buttons.
+    region: ['#buybox', '#desktop_buybox', '#rightCol'],
+  },
+};
+
+const CART_PAGE = {
+  walmart: 'https://www.walmart.com/cart',
+  target: 'https://www.target.com/cart',
+  amazon: 'https://www.amazon.com/gp/cart/view.html',
 };
 
 const CART_TEXT = /^(add to cart|add for shipping|ship it|add to bag)$/i;
-const CHALLENGE_TEXT = /robot or human|confirm that you'?re human|press & hold|verify you are human|access denied/i;
+const CHALLENGE_TEXT = /robot or human|confirm that you'?re human|press & hold|verify you are human|access denied|enter the characters you see|type the characters you see/i;
 
 const state = {
   settings: null,
@@ -39,6 +69,7 @@ const state = {
   observer: null,
   pollTimer: null,
   reloadTimer: null,
+  inviteDone: false,
 };
 
 function log(...args) {
@@ -92,7 +123,9 @@ function queryAll(selectors) {
  */
 function findCartButton() {
   const config = SELECTORS[SITE];
+  const region = (config.region || []).map((sel) => document.querySelector(sel)).find(Boolean);
   const main =
+    region ||
     document.querySelector('main') ||
     document.querySelector('[data-testid="product-details"]') ||
     document.body;
@@ -109,7 +142,9 @@ function findCartButton() {
 
   // Prefer buttons inside the main product region over carousel buttons.
   const scoped = unique.filter((el) => main.contains(el));
-  const pool = scoped.length > 0 ? scoped : unique;
+  // Where the site has a known buy box, never look outside it: on a sold-out
+  // page the only enabled cart buttons are in "similar items" carousels.
+  const pool = region ? scoped : scoped.length > 0 ? scoped : unique;
 
   return pool.find((el) => !isDisabled(el)) || null;
 }
@@ -135,6 +170,40 @@ function onChallengePage() {
   return document.body.innerText.length < 2000 && CHALLENGE_TEXT.test(document.body.innerText);
 }
 
+/**
+ * Who is selling the buy-box offer on Amazon. null when it can't be read.
+ * @returns {{amazon: boolean, text: string}|null}
+ */
+function readAmazonSeller() {
+  for (const selector of SELECTORS.amazon.seller) {
+    const el = document.querySelector(selector);
+    const text = (el?.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const soldBy = /sold by:?\s*(.+?)(?:\s+(?:returns|payment|ships from|details|and fulfilled)\b|$)/i.exec(text);
+    const seller = (soldBy ? soldBy[1] : text).trim();
+    return {
+      amazon: /^amazon(\.com)?\b/i.test(seller) && !/^amazon\s*(resale|warehouse)/i.test(seller),
+      text: seller.slice(0, 60),
+    };
+  }
+  return null;
+}
+
+/**
+ * A skip (over the cap, wrong seller) is reported once per tab rather than on
+ * every reload, or a 45-second reload loop buries the activity feed.
+ */
+function reportSkipOnce(detail) {
+  const key = `pokebot:skip:${location.pathname}`;
+  try {
+    if (sessionStorage.getItem(key) === detail) return;
+    sessionStorage.setItem(key, detail);
+  } catch {
+    // No storage; report every time rather than never.
+  }
+  report('skipped', detail);
+}
+
 async function attemptCart(button) {
   const price = readPrice();
   const { settings } = state;
@@ -144,10 +213,24 @@ async function attemptCart(button) {
     return false;
   }
 
+  // Over the cap is usually a reseller holding the listing while first-party
+  // stock is out. Keep watching (the reload timer stays on) so the real
+  // restock at the normal price still gets caught.
   if (price > settings.maxPrice) {
-    report('skipped', `Price $${price.toFixed(2)} is over your $${settings.maxPrice} cap. Probably a reseller listing.`);
-    stop('price cap exceeded');
+    reportSkipOnce(`Price $${price.toFixed(2)} is over your $${settings.maxPrice} cap. Probably a reseller -- still watching.`);
     return false;
+  }
+
+  if (SITE === 'amazon' && settings.amazonOnly) {
+    const seller = readAmazonSeller();
+    if (!seller) {
+      reportSkipOnce('In stock, but the seller could not be read -- not carting blind. Still watching.');
+      return false;
+    }
+    if (!seller.amazon) {
+      reportSkipOnce(`Sold by "${seller.text}", not Amazon -- still watching for Amazon's own stock.`);
+      return false;
+    }
   }
 
   report('in-stock', `Add to cart is live at $${price.toFixed(2)}`);
@@ -172,8 +255,7 @@ async function attemptCart(button) {
     if (settings.goToCartAfterAdd) {
       // Give the click's XHR a moment to land before navigating away.
       setTimeout(() => {
-        location.href =
-          SITE === 'walmart' ? 'https://www.walmart.com/cart' : 'https://www.target.com/cart';
+        location.href = CART_PAGE[SITE];
       }, 2500);
     }
   }
@@ -189,12 +271,50 @@ function check() {
     return;
   }
 
+  if (SITE === 'amazon') checkInvite();
+  if (state.stopped) return;
+
   const button = findCartButton();
   const signature = button ? `${button.tagName}:${button.textContent?.trim()}` : 'none';
   if (signature === state.lastSignature) return;
   state.lastSignature = signature;
 
   if (button) attemptCart(button);
+}
+
+/**
+ * Amazon gates some hyped items behind "Request invitation": one request per
+ * account, and invites go out later. Requesting it as soon as the button
+ * appears is the whole job; there is nothing to race after that.
+ */
+function checkInvite() {
+  if (state.inviteDone) return;
+  const button = Array.from(document.querySelectorAll('button, input[type="submit"], a[role="button"]'))
+    .find((el) => /^request (an )?invit(e|ation)$/i.test((el.textContent || el.value || '').trim()));
+  if (!button || isDisabled(button)) return;
+  state.inviteDone = true;
+
+  if (!state.settings.armed || state.settings.dryRun) {
+    report('in-stock', 'Amazon invite-only item: "Request invitation" is open. Request it now.');
+    return;
+  }
+  button.click();
+  report('carted', 'Requested an Amazon invitation for this item. Amazon emails you if you are picked.');
+  stop('invitation requested');
+}
+
+/**
+ * Reload on a jittered schedule while nothing is buyable. Jitter keeps a
+ * dozen pinned tabs from reloading in lockstep, which looks far more like a
+ * bot than a person and wastes a burst of requests at the same instant.
+ */
+function scheduleReload() {
+  const base = state.settings.reloadSeconds * 1000;
+  if (base <= 0) return;
+  const delay = Math.max(20000, base * (0.8 + Math.random() * 0.4));
+  state.reloadTimer = setTimeout(() => {
+    if (!state.stopped && !onChallengePage()) location.reload();
+  }, delay);
 }
 
 async function init() {
@@ -215,11 +335,7 @@ async function init() {
 
   state.pollTimer = setInterval(check, state.settings.pollMs);
 
-  if (state.settings.reloadSeconds > 0) {
-    state.reloadTimer = setTimeout(() => {
-      if (!state.stopped) location.reload();
-    }, state.settings.reloadSeconds * 1000);
-  }
+  scheduleReload();
 
   check();
 }

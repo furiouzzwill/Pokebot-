@@ -19,7 +19,15 @@ const DEFAULT_SETTINGS = {
   maxPrice: 100,
   maxCarts: 1,
   pollMs: 1000,
-  reloadSeconds: 0,
+  // A product page never updates its own stock state, so an unattended tab
+  // only sees a restock if it reloads. 0 here meant "paste a link and it
+  // silently never fires". 45s (jittered in the tab) stays well clear of a
+  // bot check while still catching restocks that last more than a minute.
+  reloadSeconds: 45,
+  // Amazon: only cart when Amazon itself is the seller. Third-party sellers
+  // take over the buy box at markup the moment stock runs out, and the
+  // price cap alone doesn't catch a reseller pricing just under it.
+  amazonOnly: true,
   goToCartAfterAdd: true,
   autoCheckout: false,
   placeOrder: false,
@@ -93,6 +101,7 @@ function migrateRules(stored) {
 function emptyState() {
   return {
     settings: { ...DEFAULT_SETTINGS },
+    migrations: ['reload-on'],
     rules: { ...DEFAULT_RULES },
     watchlist: [],
     history: [],
@@ -100,11 +109,27 @@ function emptyState() {
   };
 }
 
+/**
+ * One-time upgrades for state files written by older versions. Each runs once
+ * and records that it ran, so a value the user sets afterwards is respected.
+ */
+function migrateSettings(parsed) {
+  const settings = { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) };
+  const done = new Set(Array.isArray(parsed.migrations) ? parsed.migrations : []);
+  if (!done.has('reload-on') && settings.reloadSeconds === 0) {
+    settings.reloadSeconds = DEFAULT_SETTINGS.reloadSeconds;
+  }
+  done.add('reload-on');
+  return { settings, migrations: [...done] };
+}
+
 function load() {
   try {
     const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    const { settings, migrations } = migrateSettings(parsed);
     return {
-      settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
+      settings,
+      migrations,
       rules: migrateRules(parsed.rules),
       watchlist: Array.isArray(parsed.watchlist) ? parsed.watchlist : [],
       history: Array.isArray(parsed.history) ? parsed.history : [],
@@ -148,20 +173,47 @@ function snapshot() {
   };
 }
 
-function addItem({ url, name }) {
-  const trimmed = String(url || '').trim();
-  // resolveSite throws on anything that isn't a supported product URL, which
-  // is exactly the validation we want before it reaches the extension.
-  const { adapter } = resolveSite(trimmed);
+/**
+ * Normalise a product link so the same item can't be added twice under
+ * different tracking params. Sites with an explicit canonical form (Amazon)
+ * use it; others drop the query string and fragment.
+ * @throws when the URL isn't a supported product page.
+ */
+function canonicalUrl(raw) {
+  const { adapter, url } = resolveSite(String(raw || '').trim());
+  if (adapter.canonical) {
+    const canon = adapter.canonical(url);
+    if (!canon) throw new Error(`That ${adapter.label} link isn't a product page`);
+    return { url: canon, adapter };
+  }
+  return { url: `${url.origin}${url.pathname}`, adapter };
+}
 
-  if (state.watchlist.some((item) => item.url === trimmed)) {
-    throw new Error('That URL is already on the watchlist');
+function sameProduct(a, b) {
+  try {
+    const left = resolveSite(a);
+    const right = resolveSite(b);
+    if (left.adapter.key !== right.adapter.key) return false;
+    const id = left.adapter.itemId(left.url);
+    return id !== null && id === right.adapter.itemId(right.url);
+  } catch {
+    return false;
+  }
+}
+
+function addItem({ url, name }) {
+  // canonicalUrl throws on anything that isn't a supported product URL, which
+  // is exactly the validation we want before it reaches the extension.
+  const { url: clean, adapter } = canonicalUrl(url);
+
+  if (state.watchlist.some((item) => item.url === clean || sameProduct(item.url, clean))) {
+    throw new Error('That product is already on the watchlist');
   }
 
   const item = {
     id: crypto.randomUUID(),
-    url: trimmed,
-    name: String(name || '').trim() || trimmed,
+    url: clean,
+    name: String(name || '').trim() || clean,
     site: adapter.key,
     enabled: true,
     addedAt: new Date().toISOString(),
@@ -203,7 +255,13 @@ function setSettings(patch) {
 
 function matchItem(url) {
   if (!url) return null;
-  return state.watchlist.find((item) => url.startsWith(item.url.split('?')[0])) || null;
+  // By product id first: Amazon in particular rewrites /dp/ASIN to a
+  // slugged path, so a prefix match on the URL would miss its own tab.
+  return (
+    state.watchlist.find((item) => sameProduct(item.url, url)) ||
+    state.watchlist.find((item) => url.startsWith(item.url.split('?')[0])) ||
+    null
+  );
 }
 
 /** Record an event from the extension and update the item's live status. */
@@ -300,6 +358,8 @@ module.exports = {
   dismissDiscovery,
   setRules,
   STATE_FILE,
+  canonicalUrl,
+  sameProduct,
   getState,
   snapshot,
   addItem,

@@ -1,6 +1,6 @@
 # pokebot
 
-Tools for catching Pokémon TCG drops at Walmart and Target. Four pieces:
+Tools for catching Pokémon TCG restocks at Walmart, Target and Amazon. Four pieces:
 
 0. **`desktop/`** — an Electron wrapper: the dashboard as a double-clickable
    app with a tray icon, no terminal and no Node install. It hosts the same
@@ -25,6 +25,58 @@ what's happening; every click stays in your real session, which is the only
 place it works.
 
 ---
+
+## Paste a link, it buys on restock
+
+This is the main way to use it. Paste a Walmart, Target or Amazon product
+link into the dashboard's watchlist. The extension opens it in a pinned tab
+in your logged-in Chrome and reloads it about every 45 seconds (jittered, so
+a dozen tabs don't reload in lockstep). The moment it can be bought under
+your rules, it carts it — and, if you've turned checkout on, places the order.
+
+Product pages never update their own stock, so the reload is what makes a
+restock visible at all. It used to default to off, which meant a pasted link
+quietly never fired; it's now on by default, and older setups are switched
+on once (set it back to 0 if you really want it off).
+
+A tab that finds the item over your price cap, or sold by a reseller, says so
+once and **keeps watching**: that's usually a reseller holding the listing
+while real stock is out, and the restock at the normal price is the one you
+want.
+
+### Amazon
+
+Links in any shape work — `/dp/…`, `/Some-Name/dp/…/ref=…`, `/gp/product/…`
+— and are stored as one clean `amazon.com/dp/<ASIN>` link so the same item
+can't be added twice.
+
+- **Sold by Amazon only** (on by default). The moment Amazon's own stock runs
+  out, a third-party seller takes over the buy box at a markup, often just
+  under any price cap you'd set. With this on it only carts when the buy box
+  says *Sold by Amazon.com*, and never "Amazon Resale" (used). If it can't
+  read the seller it doesn't cart.
+- **Only the buy box.** It clicks Add to Cart in the buy box, never Buy Now
+  (which skips the cart and the order-total checks), and never the cart
+  buttons in "similar items" carousels — on a sold-out page those are the
+  only enabled ones, and a test pins that it leaves them alone.
+- **Invite-only items.** When a page shows *Request invitation*, it requests
+  it once (armed and not in dry run), or alerts you to in dry run. Amazon picks
+  who gets invited later and emails them; there's nothing to race after that.
+- **Checkout** goes cart → *Proceed to checkout* → *Place your order*, with the
+  same refusals as the other stores: unreadable total, over the total cap, too
+  many items, or the day's order budget spent all mean no order.
+- **CAPTCHA:** if Amazon shows "Enter the characters you see below", it stops
+  and alerts you. Solve it yourself and the tab carries on after a reload.
+
+The Amazon selectors were written against Amazon's usual page structure and
+tested on Amazon-shaped pages, not the live site. Do a dry run on an
+in-stock Amazon item before trusting it with checkout on.
+
+### Raffles
+
+Raffles (Pokémon Center and the like) are a draw, not a race, so there's
+nothing to automate: enter once per person when it opens. Entering with
+extra accounts breaks the raffle's rules and gets entries voided.
 
 ## Why it's an extension and not a headless bot
 
@@ -133,9 +185,10 @@ Settings:
 |---|---|
 | **Armed** | Off = alert only, never clicks. |
 | **Dry run** | Logs every click without making it. Default on. |
-| **Max price** | Won't cart above this — guards against a marketplace reseller listing replacing the sold-out first-party one. |
+| **Max price** | Won't cart above this — guards against a marketplace reseller listing replacing the sold-out first-party one. Keeps watching instead of giving up. |
+| **Amazon: sold by Amazon only** | Skips third-party sellers in the buy box. Default on. |
 | **Re-check every** | Safety-net poll; a MutationObserver catches most changes instantly. |
-| **Reload page every** | 0 = never. Use 30s+; faster invites a bot check. |
+| **Reload page every** | Default 45s, jittered ±20%. 0 = never (the tab then can't see a restock). Faster than 30s invites a bot check. |
 | **Auto-continue to checkout** | Walks cart → checkout, then stops with the order ready to submit. |
 | **Place the order** | Submits it. Requires auto-continue. Default off. |
 | **Max order total** | Checked against the total the checkout page actually shows, after tax and shipping. |

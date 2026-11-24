@@ -27,9 +27,13 @@ const DEFAULTS = {
   // The MutationObserver catches most changes; this is the safety net.
   pollMs: 1000,
 
-  // Reload the page every N seconds if nothing has changed. Some PDPs never
-  // re-hydrate stock state on their own. 0 disables reloading.
-  reloadSeconds: 0,
+  // Reload the page every N seconds (jittered) while nothing is buyable.
+  // Product pages don't update their own stock state, so without this an
+  // unattended tab never sees a restock. 0 disables reloading.
+  reloadSeconds: 45,
+
+  // Amazon: only cart when Amazon.com is the seller, never a third party.
+  amazonOnly: true,
 
   // After a successful cart, open the cart page.
   goToCartAfterAdd: true,

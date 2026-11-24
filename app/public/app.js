@@ -1,7 +1,7 @@
 'use strict';
 
 const BOOLS = [
-  'armed', 'dryRun', 'autoCheckout', 'placeOrder',
+  'armed', 'dryRun', 'autoCheckout', 'placeOrder', 'amazonOnly',
   'discoveryEnabled', 'autoAddDiscoveries', 'discordAlerts',
 ];
 const NUMS = [

@@ -2,8 +2,9 @@
 
 const walmart = require('./walmart');
 const target = require('./target');
+const amazon = require('./amazon');
 
-const ADAPTERS = [walmart, target];
+const ADAPTERS = [walmart, target, amazon];
 
 /**
  * Pick the adapter for a product URL.

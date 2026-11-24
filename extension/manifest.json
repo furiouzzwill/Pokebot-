@@ -2,11 +2,12 @@
   "manifest_version": 3,
   "name": "Pokebot Drop Assistant",
   "version": "0.1.0",
-  "description": "Watches a Walmart or Target product tab you have open and adds the item to your cart the moment it goes in stock.",
+  "description": "Watches a Walmart, Target or Amazon product tab you have open and adds the item to your cart the moment it goes in stock.",
   "permissions": ["storage", "notifications", "tabs", "alarms"],
   "host_permissions": [
     "https://www.walmart.com/*",
     "https://www.target.com/*",
+    "https://www.amazon.com/*",
     "http://127.0.0.1/*"
   ],
   "background": {
@@ -16,7 +17,11 @@
     {
       "matches": [
         "https://www.walmart.com/ip/*",
-        "https://www.target.com/p/*"
+        "https://www.target.com/p/*",
+        "https://www.amazon.com/dp/*",
+        "https://www.amazon.com/*/dp/*",
+        "https://www.amazon.com/gp/product/*",
+        "https://www.amazon.com/gp/aw/d/*"
       ],
       "js": ["config.js", "content.js"],
       "run_at": "document_idle"
@@ -26,7 +31,11 @@
         "https://www.walmart.com/cart*",
         "https://www.walmart.com/checkout*",
         "https://www.target.com/cart*",
-        "https://www.target.com/co-*"
+        "https://www.target.com/co-*",
+        "https://www.amazon.com/gp/cart/*",
+        "https://www.amazon.com/cart*",
+        "https://www.amazon.com/gp/buy/*",
+        "https://www.amazon.com/checkout/*"
       ],
       "js": ["config.js", "checkout.js"],
       "run_at": "document_idle"

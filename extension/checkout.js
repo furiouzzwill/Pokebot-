@@ -14,12 +14,18 @@
  * budget claimed *before* the click.
  */
 
-const SITE = location.hostname.includes('walmart') ? 'walmart' : 'target';
+const SITE = location.hostname.includes('walmart')
+  ? 'walmart'
+  : location.hostname.includes('amazon')
+    ? 'amazon'
+    : 'target';
 
 const PAGE = (() => {
   const path = location.pathname;
   if (/\/cart/.test(path)) return 'cart';
-  if (/checkout|\/co-/.test(path)) return 'checkout';
+  // Amazon's checkout lives under /gp/buy/ (spc = single-page checkout) or
+  // /checkout/; the others use /checkout or Target's /co-review.
+  if (/checkout|\/co-|\/gp\/buy\//.test(path)) return 'checkout';
   return 'other';
 })();
 
@@ -36,11 +42,30 @@ const SEL = {
     total: ['[data-test="orderSummaryTotal"]', '[data-test="order-summary-total"]'],
     items: ['[data-test="cartItem"]', '[data-test="cart-item"]'],
   },
+  amazon: {
+    toCheckout: [
+      'input[name="proceedToRetailCheckout"]',
+      '#sc-buy-box-ptc-button input',
+      '#sc-buy-box-ptc-button',
+    ],
+    placeOrder: [
+      '#placeOrder',
+      'input[name="placeYourOrder1"]',
+      '#submitOrderButtonId input',
+      '#bottomSubmitOrderButtonId input',
+    ],
+    total: [
+      '.grand-total-price',
+      '#subtotals-marketplace-table .grand-total-price',
+      '[data-testid="order-summary-total"]',
+    ],
+    items: ['[data-name="Active Items"] .sc-list-item[data-asin]', '.sc-list-item[data-asin]'],
+  },
 };
 
 const TO_CHECKOUT_TEXT = /^(continue to checkout|check ?out|proceed to checkout|sign in to check out)$/i;
 const PLACE_ORDER_TEXT = /^(place order|place your order|submit order|pay now)$/i;
-const CHALLENGE_TEXT = /robot or human|confirm that you'?re human|press & hold|verify you are human|access denied/i;
+const CHALLENGE_TEXT = /robot or human|confirm that you'?re human|press & hold|verify you are human|access denied|enter the characters you see|type the characters you see/i;
 
 const state = { settings: null, stopped: false, acted: false, timer: null };
 
